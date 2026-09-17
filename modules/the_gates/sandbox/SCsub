@@ -5,7 +5,7 @@ Import("env_tg")
 
 # Only the target-side lockdown is built here; the spawn side lives in the
 # launcher. Linux is the only platform with a lockdown backend on this branch.
-if env["platform"] == "x11":
+if env["platform"] in ("x11", "frt"):
     env_sandbox = env_tg.Clone()
     env_sandbox.Prepend(CPPPATH=["linux"])
     env_sandbox.add_source_files(env.modules_sources, "*.cpp")

@@ -20,7 +20,7 @@ thirdparty_obj = []
 thirdparty_sources = []
 
 # flingfd
-if env["platform"] == "x11":
+if env["platform"] in ("x11", "frt"):
     thirdparty_flingfd_dir = "#thirdparty/flingfd/"
     thirdparty_sources += [thirdparty_flingfd_dir + "flingfd.c"]
     env_tg.Prepend(CPPPATH=[thirdparty_flingfd_dir])
@@ -58,7 +58,7 @@ env_zmq.Prepend(
 # Upstream libzmq generates platform.hpp via autoconf or cmake; we vendor the
 # source without that step. These macros are what cmake would emit per target.
 env_zmq.Append(CPPDEFINES=["ZMQ_USE_BUILTIN_SHA1"])
-if env["platform"] == "x11":
+if env["platform"] in ("x11", "frt"):
     env_zmq.Append(
         CPPDEFINES=[
             "ZMQ_HAVE_LINUX",

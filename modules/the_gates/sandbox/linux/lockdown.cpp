@@ -28,7 +28,7 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-#ifdef X11_ENABLED
+#if defined(X11_ENABLED) || defined(FRT_ENABLED)
 
 #include "lockdown.h"
 
@@ -516,4 +516,4 @@ Error tg_apply_lockdown(const String &p_rw_dir,
 	return apply_seccomp();
 }
 
-#endif // X11_ENABLED
+#endif // X11_ENABLED || FRT_ENABLED

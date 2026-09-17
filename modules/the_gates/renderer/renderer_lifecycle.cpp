@@ -5,7 +5,7 @@
 #include "../ipc/zmq_runtime.h"
 #include "gl_external_texture.h"
 
-#ifdef X11_ENABLED
+#if defined(X11_ENABLED) || defined(FRT_ENABLED)
 #include "../network/network_broker_engage.h"
 #include "../sandbox/lockdown_engage.h"
 #endif
@@ -53,7 +53,7 @@ bool TGRendererLifecycle::engage() {
 	print_line("[RENDERER-START]");
 	redirect_user_data_dir();
 
-#ifdef X11_ENABLED
+#if defined(X11_ENABLED) || defined(FRT_ENABLED)
 	const bool sandboxed = tg_engage_network_broker();
 #endif
 
@@ -90,7 +90,7 @@ bool TGRendererLifecycle::engage() {
 	input_sync = memnew(InputSync);
 	input_sync->socket_connect();
 
-#ifdef X11_ENABLED
+#if defined(X11_ENABLED) || defined(FRT_ENABLED)
 	if (sandboxed) {
 		tg_lock_down_renderer();
 	}
@@ -243,7 +243,7 @@ void tg_renderer_teardown() {
 	if (lifecycle != nullptr) {
 		memdelete(lifecycle);
 	}
-#ifdef X11_ENABLED
+#if defined(X11_ENABLED) || defined(FRT_ENABLED)
 	tg_disengage_network_broker();
 #endif
 	tg_zmq_shutdown();

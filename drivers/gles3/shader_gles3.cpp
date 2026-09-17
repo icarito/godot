@@ -219,6 +219,23 @@ void ShaderGLES3::advance_async_shaders_compilation() {
 	}
 }
 
+void ShaderGLES3::pump_events_during_compilation() {
+	// A synchronous compile or link can keep this thread inside the GL driver
+	// for seconds (the scene ubershader especially). The windowing system has to
+	// keep being served meanwhile: a Wayland compositor pings the client and
+	// flags it as unresponsive when no pong comes back in time. Throttle to
+	// 100 ms so a busy compile loop does not flood the platform with pumps; the
+	// platform hook only answers system traffic and leaves input events queued
+	// for the normal event loop.
+	static uint64_t last_pump_usec = 0;
+	const uint64_t now_usec = OS::get_singleton()->get_ticks_usec();
+	if (now_usec - last_pump_usec < 100000) {
+		return;
+	}
+	last_pump_usec = now_usec;
+	OS::get_singleton()->pump_events_keepalive();
+}
+
 void ShaderGLES3::_log_active_compiles() {
 #ifdef DEBUG_ENABLED
 	if (log_active_async_compiles_count) {
@@ -238,6 +255,14 @@ bool ShaderGLES3::_process_program_state(Version *p_version, bool p_async_forbid
 	bool run_next_step = true;
 	while (run_next_step) {
 		run_next_step = false;
+		// A non-OK status means the step below may compile, link, wait for the
+		// queue or apply a binary inline, all inside the GL driver. Serve the
+		// platform in between so a compositor does not time the process out for
+		// the whole duration (the OK case is the common per-bind path and does no
+		// work, so it is skipped).
+		if (p_version->compile_status != Version::COMPILE_STATUS_OK) {
+			pump_events_during_compilation();
+		}
 		switch (p_version->compile_status) {
 			case Version::COMPILE_STATUS_OK: {
 				// Yeaaah!

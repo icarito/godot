@@ -32,6 +32,7 @@
 #define RASTERIZER_STORAGE_GLES3_H
 
 #include "core/bitfield_dynamic.h"
+#include "core/os/mutex.h"
 #include "core/self_list.h"
 #include "drivers/gles_common/rasterizer_asserts.h"
 #include "servers/visual/rasterizer.h"
@@ -547,6 +548,18 @@ public:
 
 	mutable SelfList<Shader>::List _shader_dirty_list;
 	void _shader_make_dirty(Shader *p_shader);
+
+	// Serializes shader code storage and compilation between the main thread
+	// and the editor's preview / resource loader threads, which set shader
+	// properties while a resource is being loaded off the main thread.
+	// Mutex is recursive in 3.6, so nesting from call chains is safe.
+	mutable Mutex shader_dirty_mutex;
+
+	// RIDs queued by RasterizerStorageGLES3::free() when called off the main
+	// thread (the editor's preview and loader threads), drained by
+	// update_dirty_resources() on the main thread.
+	Mutex off_thread_free_mutex;
+	List<RID> off_thread_free_queue;
 
 	mutable RID_Owner<Shader> shader_owner;
 

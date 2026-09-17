@@ -143,6 +143,11 @@ public:
 
 	static void advance_async_shaders_compilation();
 
+	// Keeps the windowing system served while the compile state machine does
+	// blocking work (compile, link, queue wait, binary apply). See
+	// OS::pump_events_keepalive. Throttled internally; main thread only.
+	static void pump_events_during_compilation();
+
 private:
 	union VersionKey {
 		static const uint32_t UBERSHADER_FLAG = ((uint32_t)1) << 31;

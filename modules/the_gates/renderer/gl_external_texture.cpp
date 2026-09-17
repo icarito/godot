@@ -30,9 +30,14 @@ extern "C" int CGLTexImageIOSurface2D(void *ctx, GLenum target, GLenum internal_
 
 #include <unistd.h>
 
+#if defined(FRT_ENABLED)
+// FRT drives GL through SDL2, so no GLX entry points are in the process.
+extern "C" void *SDL_GL_GetProcAddress(const char *);
+#else
 // Declared rather than pulling <GL/glx.h>, which redefines the GL types glad
 // already provides.
 extern "C" void *glXGetProcAddressARB(const unsigned char *procName);
+#endif
 #endif
 
 namespace {
@@ -81,7 +86,11 @@ const char *MISSING_EXTENSION_MESSAGE =
 		"so the driver here is older than either, or the context is indirect";
 
 void *load_gl_proc(const char *p_name) {
+#if defined(FRT_ENABLED)
+	return SDL_GL_GetProcAddress(p_name);
+#else
 	return glXGetProcAddressARB(reinterpret_cast<const unsigned char *>(p_name));
+#endif
 }
 #endif
 

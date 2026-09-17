@@ -31,7 +31,7 @@
 #ifndef LOCKDOWN_H
 #define LOCKDOWN_H
 
-#ifdef X11_ENABLED
+#if defined(X11_ENABLED) || defined(FRT_ENABLED)
 
 #include "core/error_list.h"
 #include "core/ustring.h"
@@ -54,6 +54,6 @@ Error tg_apply_lockdown(const String &p_rw_dir,
 // so the diagnostic must consult this cached value instead.
 int tg_lockdown_landlock_abi();
 
-#endif // X11_ENABLED
+#endif // X11_ENABLED || FRT_ENABLED
 
 #endif // LOCKDOWN_H

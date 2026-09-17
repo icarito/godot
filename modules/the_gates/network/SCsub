@@ -5,7 +5,7 @@ Import("env_tg")
 
 # The broker wire protocol, framing and CIDR policy are POSIX-only; the
 # renderer routes networking through the launcher's broker on Linux.
-if env["platform"] == "x11":
+if env["platform"] in ("x11", "frt"):
     env_net = env_tg.Clone()
     env_net.Prepend(CPPPATH=["."])
     env_net.add_source_files(env.modules_sources, "*.cpp")

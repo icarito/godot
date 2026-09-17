@@ -28,7 +28,7 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-#ifdef X11_ENABLED
+#if defined(X11_ENABLED) || defined(FRT_ENABLED)
 
 #include "seccomp_policy.h"
 
@@ -307,4 +307,4 @@ ResultExpr TheGatesRendererPolicy::InvalidSyscall() const {
 	return Error(ENOSYS);
 }
 
-#endif // X11_ENABLED
+#endif // X11_ENABLED || FRT_ENABLED

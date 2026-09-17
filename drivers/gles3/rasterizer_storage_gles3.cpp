@@ -32,6 +32,7 @@
 
 #include "core/engine.h"
 #include "core/os/os.h"
+#include "core/os/thread.h"
 #include "core/project_settings.h"
 #include "core/threaded_callable_queue.h"
 #include "main/main.h"
@@ -2129,12 +2130,16 @@ void RasterizerStorageGLES3::_shader_make_dirty(Shader *p_shader) {
 		return;
 	}
 
+	MutexLock lock(shader_dirty_mutex);
+
 	_shader_dirty_list.add(&p_shader->dirty_list);
 }
 
 void RasterizerStorageGLES3::shader_set_code(RID p_shader, const String &p_code) {
 	Shader *shader = shader_owner.get(p_shader);
 	ERR_FAIL_COND(!shader);
+
+	MutexLock lock(shader_dirty_mutex);
 
 	shader->code = p_code;
 
@@ -2357,7 +2362,15 @@ void RasterizerStorageGLES3::_update_shader(Shader *p_shader) const {
 }
 
 void RasterizerStorageGLES3::update_dirty_shaders() {
+	// Runs on the main thread; shader_set_code()/_shader_make_dirty() can be
+	// called from editor preview / loader threads, so walk and drain the list
+	// under the same lock.
+	MutexLock lock(shader_dirty_mutex);
+
 	while (_shader_dirty_list.first()) {
+		// Compiling a whole scene's worth of shaders can run for a while; keep the
+		// windowing system served between them.
+		ShaderGLES3::pump_events_during_compilation();
 		_update_shader(_shader_dirty_list.first()->self());
 	}
 }
@@ -2365,6 +2378,8 @@ void RasterizerStorageGLES3::update_dirty_shaders() {
 void RasterizerStorageGLES3::shader_get_param_list(RID p_shader, List<PropertyInfo> *p_param_list) const {
 	Shader *shader = shader_owner.get(p_shader);
 	ERR_FAIL_COND(!shader);
+
+	MutexLock lock(shader_dirty_mutex);
 
 	if (shader->dirty_list.in_list()) {
 		_update_shader(shader); // ok should be not anymore dirty
@@ -2555,6 +2570,8 @@ void RasterizerStorageGLES3::_material_make_dirty(Material *p_material) const {
 		return;
 	}
 
+	MutexLock lock(shader_dirty_mutex);
+
 	_material_dirty_list.add(&p_material->dirty_list);
 }
 
@@ -2597,6 +2614,8 @@ RID RasterizerStorageGLES3::material_get_shader(RID p_material) const {
 void RasterizerStorageGLES3::material_set_param(RID p_material, const StringName &p_param, const Variant &p_value) {
 	Material *material = material_owner.get(p_material);
 	ERR_FAIL_COND(!material);
+
+	MutexLock lock(shader_dirty_mutex);
 
 	if (p_value.get_type() == Variant::NIL) {
 		material->params.erase(p_param);
@@ -3359,6 +3378,10 @@ void RasterizerStorageGLES3::_material_remove_geometry(RID p_material, Geometry 
 }
 
 void RasterizerStorageGLES3::update_dirty_materials() {
+	// Same lock as update_dirty_shaders(): material_set_param() can be called
+	// from editor preview / loader threads while this walks the list.
+	MutexLock lock(shader_dirty_mutex);
+
 	while (_material_dirty_list.first()) {
 		Material *material = _material_dirty_list.first()->self();
 
@@ -8538,6 +8561,15 @@ void RasterizerStorageGLES3::finalize() {
 }
 
 void RasterizerStorageGLES3::update_dirty_resources() {
+	if (off_thread_free_queue.size()) {
+		off_thread_free_mutex.lock();
+		List<RID> pending = off_thread_free_queue;
+		off_thread_free_queue.clear();
+		off_thread_free_mutex.unlock();
+		for (const List<RID>::Element *E = pending.front(); E; E = E->next()) {
+			free(E->get());
+		}
+	}
 	update_dirty_multimeshes();
 	update_dirty_skeletons();
 	update_dirty_shaders();

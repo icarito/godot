@@ -31,7 +31,7 @@
 #ifndef SECCOMP_POLICY_H
 #define SECCOMP_POLICY_H
 
-#ifdef X11_ENABLED
+#if defined(X11_ENABLED) || defined(FRT_ENABLED)
 
 #include "sandbox/linux/bpf_dsl/bpf_dsl_forward.h"
 #include "sandbox/linux/bpf_dsl/policy.h"
@@ -48,6 +48,6 @@ public:
 	sandbox::bpf_dsl::ResultExpr InvalidSyscall() const override;
 };
 
-#endif // X11_ENABLED
+#endif // X11_ENABLED || FRT_ENABLED
 
 #endif // SECCOMP_POLICY_H
