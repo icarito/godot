@@ -165,9 +165,16 @@ RasterizerScene *RasterizerGLES2::get_scene() {
 	return scene;
 }
 
+#if defined(FRT_ENABLED) && defined(GLAD_ENABLED)
+extern "C" void *SDL_GL_GetProcAddress(const char *);
+#define frt_glad_load() gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress)
+#else
+#define frt_glad_load() gladLoadGL()
+#endif
+
 Error RasterizerGLES2::is_viable() {
 #ifdef GLAD_ENABLED
-	if (!gladLoadGL()) {
+	if (!frt_glad_load()) {
 		ERR_PRINT("Error initializing GLAD");
 		return ERR_UNAVAILABLE;
 	}
