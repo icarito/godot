@@ -1,0 +1,165 @@
+#!/usr/bin/env python
+
+Import("env")
+Import("env_tg")
+
+# Chromium's sandbox subset, vendored at thirdparty/chromium-sandbox/. The
+# bpf_dsl, seccomp-bpf and base/ trees compile against our lockdown and
+# seccomp policy; the chromium-shim/ layer terminates their dependency graph.
+chromium_dir = "#thirdparty/chromium-sandbox/"
+chromium_include = [
+    chromium_dir + "chromium-shim",
+    chromium_dir,
+    chromium_dir + "gen",
+    chromium_dir + "base/allocator/partition_allocator/src",
+    chromium_dir + "gen/base/allocator/partition_allocator/src",
+    chromium_dir + "third_party/abseil-cpp",
+]
+
+
+def cxx20(environment):
+    # Chromium headers (raw_ptr, location, scoped_generic, ...) require C++20.
+    environment["CXXFLAGS"] = [f for f in environment["CXXFLAGS"] if not str(f).startswith("-std=")]
+    environment.Append(CXXFLAGS=["-std=gnu++20"])
+    # Chromium only supports clang; GCC rejects its protected_memory attributes.
+    environment["CC"] = "clang"
+    environment["CXX"] = "clang++"
+
+
+# Godot source files
+
+env_linux = env_tg.Clone()
+cxx20(env_linux)
+env_linux.Prepend(CPPPATH=chromium_include)
+env_linux.add_source_files(env.modules_sources, "lockdown.cpp")
+env_linux.add_source_files(env.modules_sources, "seccomp_policy.cpp")
+
+
+# Vendored Chromium sandbox sources
+
+sandbox_linux_sources = [
+    "sandbox/linux/bpf_dsl/bpf_dsl.cc",
+    "sandbox/linux/bpf_dsl/codegen.cc",
+    "sandbox/linux/bpf_dsl/dump_bpf.cc",
+    "sandbox/linux/bpf_dsl/policy.cc",
+    "sandbox/linux/bpf_dsl/policy_compiler.cc",
+    "sandbox/linux/bpf_dsl/syscall_set.cc",
+    "sandbox/linux/bpf_dsl/verifier.cc",
+    "sandbox/linux/seccomp-bpf/die.cc",
+    "sandbox/linux/seccomp-bpf/syscall.cc",
+    "sandbox/linux/seccomp-bpf/trap.cc",
+    "sandbox/linux/services/syscall_wrappers.cc",
+]
+
+base_sources = [
+    "base/at_exit.cc",
+    "base/check.cc",
+    "base/check_op.cc",
+    "base/cpu.cc",
+    "base/debug/alias.cc",
+    "base/debug/crash_logging.cc",
+    "base/environment.cc",
+    "base/functional/callback_internal.cc",
+    "base/hash/hash.cc",
+    "base/lazy_instance_helpers.cc",
+    "base/location.cc",
+    "base/memory/ref_counted.cc",
+    "base/posix/safe_strerror.cc",
+    "base/rand_util.cc",
+    "base/strings/safe_sprintf.cc",
+    "base/strings/string_number_conversions.cc",
+    "base/strings/string_split.cc",
+    "base/strings/string_util.cc",
+    "base/strings/string_util_constants.cc",
+    "base/strings/stringprintf.cc",
+    "base/strings/utf_ostream_operators.cc",
+    "base/strings/utf_string_conversion_utils.cc",
+    "base/strings/utf_string_conversions.cc",
+    "base/synchronization/lock.cc",
+    "base/synchronization/lock_impl_posix.cc",
+    "base/third_party/cityhash/city.cc",
+    "base/third_party/superfasthash/superfasthash.c",
+    "base/third_party/nspr/prtime.cc",
+    "base/third_party/double_conversion/double-conversion/bignum-dtoa.cc",
+    "base/third_party/double_conversion/double-conversion/bignum.cc",
+    "base/third_party/double_conversion/double-conversion/cached-powers.cc",
+    "base/third_party/double_conversion/double-conversion/double-to-string.cc",
+    "base/third_party/double_conversion/double-conversion/fast-dtoa.cc",
+    "base/third_party/double_conversion/double-conversion/fixed-dtoa.cc",
+    "base/third_party/double_conversion/double-conversion/string-to-double.cc",
+    "base/third_party/double_conversion/double-conversion/strtod.cc",
+    "base/threading/platform_thread.cc",
+    "base/threading/platform_thread_internal_posix.cc",
+    "base/threading/platform_thread_posix.cc",
+    "base/threading/platform_thread_ref.cc",
+    "base/threading/thread_collision_warner.cc",
+    "base/threading/thread_id_name_manager.cc",
+    "base/threading/thread_local_storage.cc",
+    "base/threading/thread_local_storage_posix.cc",
+    "base/threading/thread_restrictions.cc",
+    "base/time/time.cc",
+    "base/time/time_now_posix.cc",
+    "base/trace_event/trace_event_stub.cc",
+    "base/version.cc",
+]
+
+chromium_shim_sources = [
+    "chromium-shim/base/logging_posix.cpp",
+    "chromium-shim/base/files/file_path.cpp",
+    "chromium-shim/base/debug/dump_without_crashing.cpp",
+    "chromium-shim/base/debug/stack_trace.cpp",
+    "chromium-shim/base/threading/platform_thread_linux.cpp",
+]
+
+abseil_sources = [
+    "third_party/abseil-cpp/absl/base/internal/raw_logging.cc",
+    "third_party/abseil-cpp/absl/base/internal/throw_delegate.cc",
+    "third_party/abseil-cpp/absl/numeric/int128.cc",
+    "third_party/abseil-cpp/absl/strings/ascii.cc",
+    "third_party/abseil-cpp/absl/strings/internal/escaping.cc",
+    "third_party/abseil-cpp/absl/strings/internal/ostringstream.cc",
+    "third_party/abseil-cpp/absl/strings/internal/utf8.cc",
+    "third_party/abseil-cpp/absl/strings/internal/str_format/arg.cc",
+    "third_party/abseil-cpp/absl/strings/internal/str_format/bind.cc",
+    "third_party/abseil-cpp/absl/strings/internal/str_format/extension.cc",
+    "third_party/abseil-cpp/absl/strings/internal/str_format/float_conversion.cc",
+    "third_party/abseil-cpp/absl/strings/internal/str_format/output.cc",
+    "third_party/abseil-cpp/absl/strings/internal/str_format/parser.cc",
+    "third_party/abseil-cpp/absl/strings/internal/charconv_bigint.cc",
+    "third_party/abseil-cpp/absl/strings/internal/charconv_parse.cc",
+    "third_party/abseil-cpp/absl/strings/internal/memutil.cc",
+    "third_party/abseil-cpp/absl/strings/internal/stringify_sink.cc",
+    "third_party/abseil-cpp/absl/strings/string_view.cc",
+    "third_party/abseil-cpp/absl/strings/charconv.cc",
+    "third_party/abseil-cpp/absl/strings/escaping.cc",
+    "third_party/abseil-cpp/absl/strings/match.cc",
+    "third_party/abseil-cpp/absl/strings/numbers.cc",
+    "third_party/abseil-cpp/absl/strings/str_cat.cc",
+    "third_party/abseil-cpp/absl/strings/str_replace.cc",
+    "third_party/abseil-cpp/absl/strings/str_split.cc",
+    "third_party/abseil-cpp/absl/strings/substitute.cc",
+]
+
+thirdparty_sources = [
+    chromium_dir + p
+    for p in (sandbox_linux_sources + base_sources + chromium_shim_sources + abseil_sources)
+]
+
+env_thirdparty = env_tg.Clone()
+env_thirdparty.disable_warnings()
+cxx20(env_thirdparty)
+env_thirdparty.Prepend(CPPPATH=chromium_include)
+env_thirdparty.Prepend(
+    CPPDEFINES=[
+        "NDEBUG",
+        "_GNU_SOURCE",
+        ("_FILE_OFFSET_BITS", 64),
+        ("_LARGEFILE_SOURCE", 1),
+        ("_LARGEFILE64_SOURCE", 1),
+        "NVALGRIND",
+        ("DYNAMIC_ANNOTATIONS_ENABLED", 0),
+        "MOZ_SANDBOX",
+        "CHROMIUM_SANDBOX_BUILD",
+    ]
+)
+env_thirdparty.add_source_files(env.modules_sources, thirdparty_sources)

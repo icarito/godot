@@ -134,6 +134,7 @@ opts.Add(BoolVariable("xaudio2", "Enable the XAudio2 audio driver", False))
 opts.Add(BoolVariable("disable_exceptions", "Force disabling exception handling code", True))
 opts.Add("custom_modules", "A list of comma-separated directory paths containing custom modules to build.", "")
 opts.Add(BoolVariable("custom_modules_recursive", "Detect custom modules recursively for each specified path.", True))
+opts.Add(BoolVariable("tg_renderer", "TheGates renderer build (changes binary shape: renderer process vs launcher)", False))
 
 # Advanced options
 opts.Add(BoolVariable("dev", "If yes, alias for verbose=yes warnings=extra werror=yes", False))
@@ -591,6 +592,9 @@ if selected_platform in platform_list:
             )
             suffix += ".debug"
 
+    if env["tg_renderer"]:
+        suffix += ".renderer"
+
     if env["arch"] != "":
         suffix += "." + env["arch"]
     elif env["bits"] == "32":
@@ -667,6 +671,8 @@ if selected_platform in platform_list:
     env["LIBSUFFIX"] = suffix + env["LIBSUFFIX"]
     env["SHLIBSUFFIX"] = suffix + env["SHLIBSUFFIX"]
 
+    if env["tg_renderer"]:
+        env.Append(CPPDEFINES=["TG_RENDERER"])
     if env.use_ptrcall:
         env.Append(CPPDEFINES=["PTRCALL_ENABLED"])
     if env["tools"]:

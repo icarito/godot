@@ -158,6 +158,10 @@ static bool init_use_custom_pos = false;
 static Vector2 init_custom_pos;
 static bool force_lowdpi = false;
 
+// TheGates renderer: IPC rendezvous directory and per-gate user data directory, passed by the launcher.
+String tg_ipc_dir_override;
+String tg_user_data_dir_override;
+
 // Debug
 
 static bool use_debug_profiler = false;
@@ -328,6 +332,8 @@ void Main::print_help(const char *p_binary) {
 	OS::get_singleton()->print("  --position <X>,<Y>               Request window position.\n");
 	OS::get_singleton()->print("  --low-dpi                        Force low-DPI mode (macOS and Windows only).\n");
 	OS::get_singleton()->print("  --no-window                      Run with invisible window. Useful together with --script.\n");
+	OS::get_singleton()->print("  --tg-ipc-dir <dir>               TheGates: directory holding the renderer's IPC sockets.\n");
+	OS::get_singleton()->print("  --tg-user-data-dir <dir>         TheGates: per-gate user data directory for `user://`.\n");
 	OS::get_singleton()->print("  --enable-vsync-via-compositor    When vsync is enabled, vsync via the OS' window compositor (Windows only).\n");
 	OS::get_singleton()->print("  --disable-vsync-via-compositor   Disable vsync via the OS' window compositor (Windows only).\n");
 	OS::get_singleton()->print("  --enable-delta-smoothing         When vsync is enabled, enabled frame delta smoothing.\n");
@@ -710,6 +716,22 @@ Error Main::setup(const char *execpath, int argc, char *argv[], bool p_second_ph
 		} else if (I->get() == "--no-window") { // run with an invisible window
 
 			OS::get_singleton()->set_no_window_mode(true);
+		} else if (I->get() == "--tg-ipc-dir") {
+			if (I->next()) {
+				tg_ipc_dir_override = I->next()->get();
+				N = I->next()->next();
+			} else {
+				OS::get_singleton()->print("Missing directory argument for --tg-ipc-dir, aborting.\n");
+				goto error;
+			}
+		} else if (I->get() == "--tg-user-data-dir") {
+			if (I->next()) {
+				tg_user_data_dir_override = I->next()->get();
+				N = I->next()->next();
+			} else {
+				OS::get_singleton()->print("Missing directory argument for --tg-user-data-dir, aborting.\n");
+				goto error;
+			}
 		} else if (I->get() == "--tablet-driver") {
 			if (I->next()) {
 				tablet_driver = I->next()->get();
