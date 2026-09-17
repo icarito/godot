@@ -643,22 +643,24 @@ public:
 	bool can_draw() const {
 		return !is_minimized();
 	}
-	void set_mouse_mode(MouseMode mouse_mode) {
-		switch (mouse_mode) {
-		case MouseVisible:
-		case MouseHidden:
-			SDL_SetRelativeMouseMode(SDL_FALSE);
-			SDL_SetWindowGrab(window_, SDL_FALSE);
-			SDL_ShowCursor(mouse_mode == MouseVisible ? 1 : 0);
-			break;
-		case MouseCaptured:
-			// Godot's MOUSE_MODE_CAPTURED: lock the cursor to the window and
-			// deliver relative motion. SDL_CaptureMouse alone only keeps the
-			// button pressed drags inside the window, it is not game capture.
-			SDL_SetRelativeMouseMode(SDL_TRUE);
-			SDL_SetWindowGrab(window_, SDL_TRUE);
-			SDL_ShowCursor(0);
-			break;
+	void set_mouse_mode(MouseMode mouse_mode, bool apply = true) {
+		if (apply) {
+			switch (mouse_mode) {
+			case MouseVisible:
+			case MouseHidden:
+				SDL_SetRelativeMouseMode(SDL_FALSE);
+				SDL_SetWindowGrab(window_, SDL_FALSE);
+				SDL_ShowCursor(mouse_mode == MouseVisible ? 1 : 0);
+				break;
+			case MouseCaptured:
+				// Godot's MOUSE_MODE_CAPTURED: lock the cursor to the window and
+				// deliver relative motion. SDL_CaptureMouse alone only keeps the
+				// button pressed drags inside the window, it is not game capture.
+				SDL_SetRelativeMouseMode(SDL_TRUE);
+				SDL_SetWindowGrab(window_, SDL_TRUE);
+				SDL_ShowCursor(0);
+				break;
+			}
 		}
 		mouse_mode_ = mouse_mode;
 	}

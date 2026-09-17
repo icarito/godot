@@ -250,15 +250,11 @@ public: // OS
 		return mouse_state_;
 	}
 	void set_mouse_mode(OS::MouseMode mode) override {
-		// Under --no-window the launcher owns the visible window and the
-		// pointer, and forwards input events; grabbing here would confine the
-		// cursor to an invisible window and the browser chrome would never see
-		// a click again.
-		if (is_no_window_mode_enabled()) {
-			os_.set_mouse_mode(MouseVisible);
-			return;
-		}
-		os_.set_mouse_mode(map_mouse_mode(mode));
+		// Under --no-window the launcher's visible window owns the pointer and
+		// forwards input. The renderer still records the mode so the change is
+		// relayed to the launcher, but it must not grab its own invisible
+		// window: that starved the browser chrome of clicks.
+		os_.set_mouse_mode(map_mouse_mode(mode), !is_no_window_mode_enabled());
 	}
 	OS::MouseMode get_mouse_mode() const override {
 		return map_mouse_os_mode(os_.get_mouse_mode());
