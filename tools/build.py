@@ -36,6 +36,26 @@ PROFILES: dict[str, list[str]] = {
         "disable_exceptions=no",
         "tg_renderer=yes",
     ],
+    # FRT's SDL2 backend is the Wayland display path. The launcher asks for
+    # --display-driver wayland on a Wayland session for sandbox isolation; the
+    # x11 build cannot honour that and falls back to XWayland.
+    "renderer-wayland": [
+        "platform=frt",
+        "target=release_debug",
+        "tools=no",
+        "debug_symbols=yes",
+        "disable_exceptions=no",
+        "tg_renderer=yes",
+        "frt_desktop_gl=yes",
+    ],
+    "renderer-wayland-release": [
+        "platform=frt",
+        "target=release",
+        "tools=no",
+        "disable_exceptions=no",
+        "tg_renderer=yes",
+        "frt_desktop_gl=yes",
+    ],
 }
 
 # Nothing a gate renders needs these, and dropping them takes a few minutes off
@@ -55,6 +75,7 @@ def default_jobs() -> int:
 # The file name the launcher's renderer_executable.tres looks up per platform.
 STAGED_NAMES = {
     "x11": "Renderer-godot_v%s.x86_64" % GODOT_VERSION,
+    "frt": "Renderer-godot_v%s.x86_64" % GODOT_VERSION,
     "osx": "Renderer-godot_v%s.universal" % GODOT_VERSION,
     "windows": "Renderer-godot_v%s.exe" % GODOT_VERSION,
 }
@@ -65,7 +86,8 @@ def default_platform() -> str:
 
 
 def built_binary(profile: str, platform: str) -> Path | None:
-    prefix = "godot.%s.%s." % (platform, "opt.debug" if profile == "renderer" else "opt")
+    debug = "target=release" not in PROFILES[profile]
+    prefix = "godot.%s.%s." % (platform, "opt.debug" if debug else "opt")
     # The arch suffix differs per platform: .64 on x11, .arm64 or .x86_64 on osx, .64.exe on windows.
     binaries = [p for p in (GODOT_DIR / "bin").glob(prefix + "*") if not p.name[len(prefix) :].startswith("debug")]
     return max(binaries, key=lambda p: p.stat().st_mtime, default=None)
@@ -85,8 +107,14 @@ def main() -> int:
         print("tools/build.py must live in the engine checkout", file=sys.stderr)
         return 1
 
-    cmd = ["scons", "-j", str(args.jobs), "platform=%s" % args.platform]
-    cmd += PROFILES[args.profile]
+    profile_args = PROFILES[args.profile]
+    # A profile may pin its own platform (the Wayland profiles need frt).
+    profile_platform = next((a.split("=", 1)[1] for a in profile_args if a.startswith("platform=")), args.platform)
+
+    cmd = ["scons", "-j", str(args.jobs)]
+    if not any(a.startswith("platform=") for a in profile_args):
+        cmd.append("platform=%s" % args.platform)
+    cmd += profile_args
     cmd += DISABLED_MODULES
     cmd += args.extra
 
@@ -98,15 +126,15 @@ def main() -> int:
     if result.returncode != 0:
         return result.returncode
 
-    binary = built_binary(args.profile, args.platform)
+    binary = built_binary(args.profile, profile_platform)
     if binary is None:
-        print("build reported success but no %s binary is in %s" % (args.platform, GODOT_DIR / "bin"), file=sys.stderr)
+        print("build reported success but no %s binary is in %s" % (profile_platform, GODOT_DIR / "bin"), file=sys.stderr)
         return 1
     print("built %s" % binary)
 
     if args.stage_to:
         args.stage_to.mkdir(parents=True, exist_ok=True)
-        target = args.stage_to / STAGED_NAMES[args.platform]
+        target = args.stage_to / STAGED_NAMES[profile_platform]
         shutil.copy2(binary, target)
         os.chmod(target, 0o755)
         print("staged %s" % target)

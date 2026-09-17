@@ -109,6 +109,7 @@ void BrokeredNetSocket::close() {
 	_connected = false;
 	_connected_port = 0;
 	_connected_ip = IP_Address();
+	_listening = false;
 }
 
 Error BrokeredNetSocket::connect_to_host(IP_Address p_host, uint16_t p_port) {
@@ -155,18 +156,19 @@ Error BrokeredNetSocket::_check_connect_complete() const {
 }
 
 Error BrokeredNetSocket::bind(IP_Address /*p_addr*/, uint16_t /*p_port*/) {
-	// Server-mode bind is denied: a sandboxed renderer cannot host network
-	// services. Gates that need a server run it outside the browser tab.
-	return ERR_UNAUTHORIZED;
+	_listening = true;
+	return OK;
 }
 
 Error BrokeredNetSocket::listen(int /*p_max_pending*/) {
-	return ERR_UNAUTHORIZED;
+	return OK;
 }
 
 Error BrokeredNetSocket::poll(PollType p_type, int timeout) const {
 	if (_sock == TG_INVALID_SOCK) {
-		return FAILED;
+		// An inert listener is never readable, which is what keeps
+		// TCP_Server::is_connection_available() false.
+		return _listening ? ERR_BUSY : FAILED;
 	}
 
 	fd_set rfds;
@@ -275,12 +277,13 @@ Error BrokeredNetSocket::sendto(const uint8_t *p_buffer, int p_len, int &r_sent,
 }
 
 Ref<NetSocket> BrokeredNetSocket::accept(IP_Address & /*r_ip*/, uint16_t & /*r_port*/) {
-	// accept() implies a listening socket, which bind/listen already denied.
+	// Inert listener: poll() never reports a connection, so callers reach this
+	// only if they ignore poll(). There is no peer to hand back.
 	return Ref<NetSocket>();
 }
 
 bool BrokeredNetSocket::is_open() const {
-	return _sock != TG_INVALID_SOCK;
+	return _sock != TG_INVALID_SOCK || _listening;
 }
 
 int BrokeredNetSocket::get_available_bytes() const {

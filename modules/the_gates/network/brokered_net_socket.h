@@ -15,6 +15,13 @@ private:
 	uint16_t _connected_port = 0;
 	bool _connected = false;
 
+	// Server-mode sockets are inert, the way WebSocketServer is on HTML5:
+	// bind()/listen() succeed so a gate that tries to host a service carries
+	// on instead of erroring every frame, but no socket is ever created and
+	// accept() never yields a peer. A sandboxed renderer cannot host network
+	// services, and the gate must not be able to tell the difference.
+	bool _listening = false;
+
 	// Socket options requested between open() and the first FD acquisition.
 	// Replayed onto the kernel FD as soon as the broker hands it back.
 	struct PendingOptions {
