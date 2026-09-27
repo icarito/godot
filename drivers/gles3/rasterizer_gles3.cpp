@@ -33,6 +33,131 @@
 #include "core/os/os.h"
 #include "core/project_settings.h"
 
+#include <stdint.h>
+#include <string.h>
+
+// --- FRT_PERF: GPU time per frame -------------------------------------------
+// The FRT_PERF profiler in Main::iteration splits the frame into CPU buckets,
+// and its "render" bucket is the CPU cost of *submitting* GL commands, not the
+// GPU cost of executing them. On a tiling GPU (Mali-G31) the two are unrelated,
+// and only the GPU number tells whether a render scale or a draw-call/bind fix
+// can help. This brackets the frame's GL submission (begin_frame .. end_frame,
+// the same window VisualServerRaster::draw covers) with a GL timer query.
+//
+// Uses GL_EXT_disjoint_timer_query (Mali) or GL_ARB_timer_query (Mesa desktop);
+// both spell GL_TIME_ELAPSED as 0x88BF. Results are read a few frames late so
+// nothing stalls waiting on the GPU, and a query that is not ready yet is
+// skipped. Off unless FRT_PERF is set.
+#ifndef FRT_PERF_GL_TIME_ELAPSED
+#define FRT_PERF_GL_TIME_ELAPSED 0x88BF
+#endif
+
+struct FRTPerfGPUTimer {
+	enum { RING = 8, INTERVAL = 10 };
+	bool inited = false;
+	bool active = false;
+	bool started = false;
+	bool sampling = false;
+	int frame_counter = 0;
+	int idx = 0;
+	GLuint qid[RING] = { 0, 0, 0 };
+	uint64_t acc_ns = 0;
+	int samples = 0;
+	int skipped = 0;
+
+	void init() {
+		inited = true;
+		if (!OS::get_singleton()->has_environment("FRT_PERF")) {
+			return;
+		}
+		bool ext = false;
+		// Core profile has no GL_EXTENSIONS string; enumerate instead. Both GLES3
+		// and desktop GL 3.3 have glGetStringi, and the GLES2 rasterizer is a
+		// different file, so this one is always GLES3-or-desktop.
+		GLint num_ext = 0;
+		glGetIntegerv(0x821D /*GL_NUM_EXTENSIONS*/, &num_ext);
+		for (GLint i = 0; i < num_ext && !ext; i++) {
+			const char *x = (const char *)glGetStringi(GL_EXTENSIONS, (GLuint)i);
+			if (x && (strstr(x, "GL_EXT_disjoint_timer_query") || strstr(x, "GL_ARB_timer_query"))) {
+				ext = true;
+			}
+		}
+		if (!ext) {
+			const GLubyte *e = glGetString(GL_EXTENSIONS);
+			if (e) {
+				ext = strstr((const char *)e, "GL_EXT_disjoint_timer_query") != nullptr ||
+						strstr((const char *)e, "GL_ARB_timer_query") != nullptr;
+			}
+		}
+		if (!ext) {
+			print_line("[FRT_GPU] sin timer query (ni GL_EXT_disjoint_timer_query ni GL_ARB_timer_query)");
+			return;
+		}
+		glGenQueries(RING, qid);
+		active = true;
+		print_line("[FRT_GPU] timer activo");
+	}
+
+	void begin() {
+		if (!inited) {
+			init();
+		}
+		if (!active) {
+			return;
+		}
+		// A timer query is not free on Mali: measured on the RG351V, having one
+		// active every frame cost ~8% of the frame (phys 17.4 -> 18.8 ms), i.e.
+		// the profiler perturbed what it measured. Sampling one frame in
+		// INTERVAL keeps the per-frame average representative at a tenth of the
+		// cost.
+		frame_counter++;
+		sampling = (frame_counter % INTERVAL) == 0;
+		if (!sampling) {
+			return;
+		}
+		glBeginQuery(FRT_PERF_GL_TIME_ELAPSED, qid[idx]);
+		started = true;
+	}
+
+	void end() {
+		if (!active || !sampling || !started) {
+			return;
+		}
+		glEndQuery(FRT_PERF_GL_TIME_ELAPSED);
+		// Read the query that was ended RING-1 frames ago, not the one just
+		// ended: its result cannot be ready yet, and reading it would skip
+		// every sample.
+		int read_i = (idx + 1) % RING;
+		GLuint have = 0;
+		glGetQueryObjectuiv(qid[read_i], GL_QUERY_RESULT_AVAILABLE, &have);
+		if (have) {
+			GLuint ns = 0;
+			glGetQueryObjectuiv(qid[read_i], GL_QUERY_RESULT, &ns);
+			if (ns > 0) {
+				acc_ns += ns;
+				samples++;
+			} else {
+				skipped++;
+			}
+		} else {
+			skipped++;
+		}
+		idx = (idx + 1) % RING;
+		if (samples + skipped >= 120) {
+			if (samples > 0) {
+				print_line(vformat("[FRT_GPU] gpu=%.2fms n=%d skipped=%d", (double)acc_ns / (double)samples / 1000000.0, samples, skipped));
+			} else {
+				print_line(vformat("[FRT_GPU] sin muestras (skipped=%d)", skipped));
+			}
+			acc_ns = 0;
+			samples = 0;
+			skipped = 0;
+		}
+	}
+};
+
+static FRTPerfGPUTimer frt_perf_gpu_timer;
+
 RasterizerStorage *RasterizerGLES3::get_storage() {
 	return storage;
 }
@@ -199,6 +324,8 @@ void RasterizerGLES3::initialize() {
 }
 
 void RasterizerGLES3::begin_frame(double frame_step) {
+	frt_perf_gpu_timer.begin();
+
 	time_total += frame_step * time_scale;
 
 	if (frame_step == 0) {
@@ -424,6 +551,8 @@ void RasterizerGLES3::end_frame(bool p_swap_buffers) {
 	}
 
 	ShaderGLES3::advance_async_shaders_compilation();
+
+	frt_perf_gpu_timer.end();
 
 	if (p_swap_buffers) {
 		OS::get_singleton()->swap_buffers();
