@@ -2368,6 +2368,9 @@ void RasterizerStorageGLES3::update_dirty_shaders() {
 	MutexLock lock(shader_dirty_mutex);
 
 	while (_shader_dirty_list.first()) {
+		// Compiling a whole scene's worth of shaders can run for a while; keep the
+		// windowing system served between them.
+		ShaderGLES3::pump_events_during_compilation();
 		_update_shader(_shader_dirty_list.first()->self());
 	}
 }

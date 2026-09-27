@@ -681,6 +681,14 @@ public:
 	virtual void benchmark_dump();
 
 	virtual void process_and_drop_events() {}
+
+	// Serves whatever the platform's event loop has ready without dispatching it
+	// to the game. Long blocking operations (e.g. synchronous GLES3 shader
+	// compilation) call this periodically so the windowing system keeps seeing
+	// the process as alive -- under Wayland, answering xdg_wm_base.ping. Input
+	// and window events stay queued for the next regular dispatch. No-op by default.
+	virtual void pump_events_keepalive() {}
+
 	OS();
 	virtual ~OS();
 };
