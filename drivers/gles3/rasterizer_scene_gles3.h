@@ -460,6 +460,8 @@ public:
 		float glow_hdr_luminance_cap;
 		bool glow_bicubic_upscale;
 		bool glow_high_quality;
+		float glow_map_strength;
+		RID glow_map;
 
 		VS::EnvironmentToneMapper tone_mapper;
 		float tone_mapper_exposure;
@@ -541,6 +543,7 @@ public:
 				glow_hdr_luminance_cap(12.0),
 				glow_bicubic_upscale(false),
 				glow_high_quality(false),
+				glow_map_strength(0.0),
 				tone_mapper(VS::ENV_TONE_MAPPER_LINEAR),
 				tone_mapper_exposure(1.0),
 				tone_mapper_exposure_white(1.0),
@@ -598,6 +601,7 @@ public:
 	virtual void environment_set_dof_blur_far(RID p_env, bool p_enable, float p_distance, float p_transition, float p_amount, VS::EnvironmentDOFBlurQuality p_quality);
 
 	virtual void environment_set_glow(RID p_env, bool p_enable, int p_level_flags, float p_intensity, float p_strength, float p_bloom_threshold, VS::EnvironmentGlowBlendMode p_blend_mode, float p_hdr_bleed_threshold, float p_hdr_bleed_scale, float p_hdr_luminance_cap, bool p_bicubic_upscale, bool p_high_quality);
+	virtual void environment_set_glow_map(RID p_env, float p_glow_map_strength, RID p_glow_map);
 	virtual void environment_set_fog(RID p_env, bool p_enable, float p_begin, float p_end, RID p_gradient_texture);
 
 	virtual void environment_set_ssr(RID p_env, bool p_enable, int p_max_steps, float p_fade_in, float p_fade_out, float p_depth_tolerance, bool p_roughness);
