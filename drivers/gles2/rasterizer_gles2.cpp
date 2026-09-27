@@ -76,8 +76,13 @@
 #include <GLES2/gl2ext.h>
 #include <GLES2/gl2platform.h>
 
+#if defined(FRT_ENABLED)
+extern "C" void *SDL_GL_GetProcAddress(const char *);
+#define eglGetProcAddress(x) SDL_GL_GetProcAddress(x)
+#else
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
+#endif
 #endif
 
 #if defined(MINGW_ENABLED) || defined(_MSC_VER)

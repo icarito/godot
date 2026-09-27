@@ -106,7 +106,7 @@ def make_default_controller_mappings(target, source, env):
                 platform_mappings[current_platform][guid] = line
 
     platform_variables = {
-        "Linux": "#ifdef X11_ENABLED",
+        "Linux": "#if defined(X11_ENABLED) || defined(FRT_ENABLED)",
         "Windows": "#ifdef WINDOWS_ENABLED",
         "Mac OS X": "#ifdef OSX_ENABLED",
         "Android": "#ifdef ANDROID_ENABLED",

@@ -341,6 +341,9 @@ ServiceFabricBackup/
 # Hint file for IntelliSense
 cpp.hint
 
+### FRT ##
+platform/frt
+
 ###################
 ### OS specific ###
 ###################
