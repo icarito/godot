@@ -2057,6 +2057,10 @@ void VisualServerScene::_update_instance_aabb(Instance *p_instance) {
 			new_aabb = VSG::storage->lightmap_capture_get_bounds(p_instance->base);
 
 		} break;
+		case VisualServer::INSTANCE_DECAL: {
+			new_aabb = VSG::storage->decal_get_aabb(p_instance->base);
+
+		} break;
 		default: {
 		}
 	}
@@ -2911,6 +2915,8 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 
 	reflection_probe_cull_count = 0;
 
+	decal_cull_count = 0;
+
 	//light_samplers_culled=0;
 
 	/*
@@ -2978,6 +2984,12 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 			InstanceGIProbeData *gi_probe = static_cast<InstanceGIProbeData *>(ins->base_data);
 			if (!gi_probe->update_element.in_list()) {
 				gi_probe_update_list.add(&gi_probe->update_element);
+			}
+
+		} else if (ins->base_type == VS::INSTANCE_DECAL && ins->visible) {
+			if (decal_cull_count < MAX_DECALS_CULLED) {
+				decal_cull_result[decal_cull_count] = ins;
+				decal_cull_count++;
 			}
 
 		} else if (((1 << ins->base_type) & VS::INSTANCE_GEOMETRY_MASK) && ins->visible && ins->cast_shadows != VS::SHADOW_CASTING_SETTING_SHADOWS_ONLY) {
@@ -3054,6 +3066,44 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 			ins->last_render_pass = 0; // make invalid
 		} else {
 			ins->last_render_pass = render_pass;
+		}
+	}
+
+	/* STEP 4.5 - ASSIGN DECAL MASKS */
+
+	// Sort decals by distance to camera (closest first) so objects that exceed
+	// the per-object decal slot budget keep the nearest ones.
+	for (int i = 1; i < decal_cull_count; i++) {
+		Instance *d = decal_cull_result[i];
+		float ddist = d->transformed_aabb.get_center().distance_squared_to(p_cam_transform.origin);
+		int j = i - 1;
+		while (j >= 0 && decal_cull_result[j]->transformed_aabb.get_center().distance_squared_to(p_cam_transform.origin) > ddist) {
+			decal_cull_result[j + 1] = decal_cull_result[j];
+			j--;
+		}
+		decal_cull_result[j + 1] = d;
+	}
+
+	for (int i = 0; i < instance_cull_count; i++) {
+		Instance *ins = instance_cull_result[i];
+		ins->decal_mask = 0;
+
+		if (!decal_cull_count) {
+			continue;
+		}
+
+		int slot = 0;
+		for (int j = 0; j < decal_cull_count && slot < 8; j++) {
+			Instance *d = decal_cull_result[j];
+			// The decal's own visual layers decide which object layers it projects onto.
+			if (!(ins->layer_mask & VSG::storage->decal_get_cull_mask(d->base))) {
+				continue;
+			}
+			if (!ins->transformed_aabb.intersects(d->transformed_aabb)) {
+				continue;
+			}
+			ins->decal_mask |= uint64_t(j + 1) << (slot * 8);
+			slot++;
 		}
 	}
 
@@ -3253,7 +3303,7 @@ void VisualServerScene::_render_scene(const Transform p_cam_transform, const Cam
 
 	/* PROCESS GEOMETRY AND DRAW SCENE */
 
-	VSG::scene_render->render_scene(p_cam_transform, p_cam_projection, p_eye, p_cam_orthogonal, (RasterizerScene::InstanceBase **)instance_cull_result, instance_cull_count, light_instance_cull_result, light_cull_count + directional_light_count, reflection_probe_instance_cull_result, reflection_probe_cull_count, environment, p_shadow_atlas, scenario->reflection_atlas, p_reflection_probe, p_reflection_probe_pass);
+	VSG::scene_render->render_scene(p_cam_transform, p_cam_projection, p_eye, p_cam_orthogonal, (RasterizerScene::InstanceBase **)instance_cull_result, instance_cull_count, light_instance_cull_result, light_cull_count + directional_light_count, reflection_probe_instance_cull_result, reflection_probe_cull_count, (RasterizerScene::InstanceBase **)decal_cull_result, decal_cull_count, environment, p_shadow_atlas, scenario->reflection_atlas, p_reflection_probe, p_reflection_probe_pass);
 }
 
 void VisualServerScene::render_empty_scene(RID p_scenario, RID p_shadow_atlas) {
@@ -3267,7 +3317,7 @@ void VisualServerScene::render_empty_scene(RID p_scenario, RID p_shadow_atlas) {
 	} else {
 		environment = scenario->fallback_environment;
 	}
-	VSG::scene_render->render_scene(Transform(), CameraMatrix(), 0, true, nullptr, 0, nullptr, 0, nullptr, 0, environment, p_shadow_atlas, scenario->reflection_atlas, RID(), 0);
+	VSG::scene_render->render_scene(Transform(), CameraMatrix(), 0, true, nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0, environment, p_shadow_atlas, scenario->reflection_atlas, RID(), 0);
 #endif
 }
 

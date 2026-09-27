@@ -46,6 +46,10 @@
 #include "drivers/gles3/shaders/subsurf_scattering.glsl.gen.h"
 #include "drivers/gles3/shaders/tonemap.glsl.gen.h"
 
+// Maximum number of decals whose data reaches the fragment shader each pass.
+// Decals beyond this limit simply do not render (nearest-to-camera wins).
+#define MAX_DECALS 64
+
 class RasterizerSceneGLES3 : public RasterizerScene {
 public:
 	enum ShadowFilterMode {
@@ -181,6 +185,7 @@ public:
 		GLuint spot_array_ubo;
 		GLuint omni_array_ubo;
 		GLuint reflection_array_ubo;
+		GLuint decal_array_ubo;
 
 		GLuint immediate_buffer;
 		GLuint immediate_array;
@@ -189,11 +194,13 @@ public:
 		uint8_t *spot_array_tmp;
 		uint8_t *omni_array_tmp;
 		uint8_t *reflection_array_tmp;
+		uint8_t *decal_array_tmp;
 
 		int max_ubo_lights;
 		int max_forward_lights_per_object;
 		int max_ubo_reflections;
 		int max_skeleton_bones;
+		int max_decals;
 
 		bool used_contact_shadows;
 
@@ -201,6 +208,11 @@ public:
 		int omni_light_count;
 		int directional_light_count;
 		int reflection_probe_count;
+		int decal_count;
+
+		// World-space AABBs of the decals affecting the current pass, laid out
+		// in the same order as the DecalData UBO entries.
+		AABB decal_aabbs[MAX_DECALS];
 
 		bool cull_front;
 		bool cull_disabled;
@@ -215,6 +227,27 @@ public:
 
 		VS::ViewportDebugDraw debug_draw;
 	} state;
+
+	/* DECAL ATLAS */
+
+	struct DecalAtlasSlice {
+		RID texture;
+		Ref<Image> image;
+		Rect2 region; // in 0..1 uv space of the atlas
+		Size2i size; // pixel size of the slice
+		bool uploaded;
+	};
+
+	Vector<DecalAtlasSlice> decal_atlas_slices; // insertion order keeps slice rects stable when the atlas grows
+	Map<RID, int> decal_atlas_lookup; // source texture RID -> slice index
+	GLuint decal_atlas_tex;
+	Size2i decal_atlas_size;
+	bool decal_atlas_dirty;
+
+	void _update_decal_atlas();
+	void _decal_atlas_add(const RID &p_texture);
+	void _decal_atlas_clear();
+	void _setup_decals(InstanceBase **p_decal_cull_result, int p_decal_cull_count, const Transform &p_cam_transform);
 
 	/* SHADOW ATLAS API */
 
@@ -349,6 +382,21 @@ public:
 		float local_matrix[16]; //up to here for spot and omni, rest is for directional
 		//notes: for ambientblend, use distance to edge to blend between already existing global environment
 	};
+
+	// Must match DecalData in shaders/scene.glsl (std140). The decal projection
+	// xform maps view-space positions to the decal's 0..1 xz / -1..1 y box space.
+	struct DecalDataUBO {
+		float xform[16];
+		float albedo_rect[4]; // uv offset + uv size in the atlas, 0 = no channel
+		float emission_rect[4];
+		float normal_rect[4];
+		float orm_rect[4];
+		float modulate[4];
+		float params[4]; // emission_energy, upper_fade, lower_fade, albedo_mix
+		float normal_and_fade[4]; // xyz = decal +Z axis in view space, w = normal_fade
+	};
+
+	static_assert(sizeof(DecalDataUBO) % 16 == 0, "DecalDataUBO size must be a multiple of 16 bytes");
 
 	mutable RID_Owner<ReflectionProbeInstance> reflection_probe_instance_owner;
 
@@ -859,7 +907,7 @@ public:
 	void _bind_depth_texture();
 
 	bool _element_needs_directional_add(RenderList::Element *e);
-	virtual void render_scene(const Transform &p_cam_transform, const CameraMatrix &p_cam_projection, const int p_eye, bool p_cam_ortogonal, InstanceBase **p_cull_result, int p_cull_count, RID *p_light_cull_result, int p_light_cull_count, RID *p_reflection_probe_cull_result, int p_reflection_probe_cull_count, RID p_environment, RID p_shadow_atlas, RID p_reflection_atlas, RID p_reflection_probe, int p_reflection_probe_pass);
+	virtual void render_scene(const Transform &p_cam_transform, const CameraMatrix &p_cam_projection, const int p_eye, bool p_cam_ortogonal, InstanceBase **p_cull_result, int p_cull_count, RID *p_light_cull_result, int p_light_cull_count, RID *p_reflection_probe_cull_result, int p_reflection_probe_cull_count, InstanceBase **p_decal_cull_result, int p_decal_cull_count, RID p_environment, RID p_shadow_atlas, RID p_reflection_atlas, RID p_reflection_probe, int p_reflection_probe_pass);
 	virtual void render_shadow(RID p_light, RID p_shadow_atlas, int p_pass, InstanceBase **p_cull_result, int p_cull_count);
 	virtual bool free(RID p_rid);
 

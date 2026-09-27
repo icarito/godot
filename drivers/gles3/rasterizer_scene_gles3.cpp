@@ -1828,6 +1828,35 @@ void RasterizerSceneGLES3::_setup_light(RenderList::Element *e, const Transform 
 		glUniform1iv(state.scene_shader.get_uniform(SceneShaderGLES3::SPOT_LIGHT_INDICES), spot_count, spot_indices);
 	}
 
+	// Per-object decal slots: up to 8 decal indices packed as bytes in the
+	// instance mask (order matches the DecalData UBO built in _setup_decals;
+	// values are index+1, a zero byte terminates the list). The shader decodes
+	// with int(slot + 0.5) - 1, so pass the raw byte as a float.
+	uint64_t decal_mask = e->instance->decal_mask;
+	int decal_count = 0;
+	float slots0[4] = { 255.0, 255.0, 255.0, 255.0 };
+	float slots1[4] = { 255.0, 255.0, 255.0, 255.0 };
+
+	while (decal_count < 8) {
+		uint32_t slot = uint32_t((decal_mask >> (decal_count * 8)) & 0xFF);
+		if (slot == 0) {
+			break;
+		}
+		float idx = float(slot);
+		if (decal_count < 4) {
+			slots0[decal_count] = idx;
+		} else {
+			slots1[decal_count - 4] = idx;
+		}
+		decal_count++;
+	}
+
+	state.scene_shader.set_uniform(SceneShaderGLES3::DECAL_COUNT, decal_count);
+	if (decal_count) {
+		state.scene_shader.set_uniform(SceneShaderGLES3::DECAL_SLOTS0, slots0[0], slots0[1], slots0[2], slots0[3]);
+		state.scene_shader.set_uniform(SceneShaderGLES3::DECAL_SLOTS1, slots1[0], slots1[1], slots1[2], slots1[3]);
+	}
+
 	int rc = e->instance->reflection_probe_instances.size();
 
 	if (rc) {
@@ -2053,6 +2082,7 @@ void RasterizerSceneGLES3::_render_list(RenderList::Element **p_elements, int p_
 					state.scene_shader.set_conditional(SceneShaderGLES3::USE_LIGHTMAP_LAYERED, false);
 					state.scene_shader.set_conditional(SceneShaderGLES3::USE_RADIANCE_MAP, false);
 					state.scene_shader.set_conditional(SceneShaderGLES3::USE_CONTACT_SHADOWS, false);
+					state.scene_shader.set_conditional(SceneShaderGLES3::USE_DECALS, false);
 
 					//state.scene_shader.set_conditional(SceneShaderGLES3::SHADELESS,true);
 				} else {
@@ -2076,6 +2106,9 @@ void RasterizerSceneGLES3::_render_list(RenderList::Element **p_elements, int p_
 					state.scene_shader.set_conditional(SceneShaderGLES3::SHADOW_MODE_PCF_13, shadow_filter_mode == SHADOW_FILTER_PCF13);
 					state.scene_shader.set_conditional(SceneShaderGLES3::USE_RADIANCE_MAP, use_radiance_map);
 					state.scene_shader.set_conditional(SceneShaderGLES3::USE_CONTACT_SHADOWS, state.used_contact_shadows);
+					// Decals are per-pixel projections; they are disabled on
+					// shadow/depth passes (p_shadow) where the atlas is not bound.
+					state.scene_shader.set_conditional(SceneShaderGLES3::USE_DECALS, !p_shadow && e->instance->decal_mask != 0);
 
 					if (use_directional) {
 						if (p_directional_shadows && directional_light->light_ptr->shadow) {
@@ -3259,6 +3292,277 @@ void RasterizerSceneGLES3::_blur_effect_buffer() {
 	}
 }
 
+void RasterizerSceneGLES3::_decal_atlas_clear() {
+	if (decal_atlas_tex) {
+		glDeleteTextures(1, &decal_atlas_tex);
+		decal_atlas_tex = 0;
+	}
+	decal_atlas_slices.clear();
+	decal_atlas_lookup.clear();
+	decal_atlas_dirty = false;
+}
+
+void RasterizerSceneGLES3::_decal_atlas_add(const RID &p_texture) {
+	if (decal_atlas_lookup.has(p_texture)) {
+		return;
+	}
+
+	if (!p_texture.is_valid()) {
+		return;
+	}
+
+	RasterizerStorageGLES3::Texture *t = storage->texture_owner.getornull(p_texture);
+	if (!t || t->render_target) {
+		return;
+	}
+
+	if (t->compressed) {
+		ERR_PRINT_ONCE("Decal textures must be uncompressed");
+		return;
+	}
+
+	// Read the source texture back from GL: works identically in the editor and
+	// in exported games (CPU-side images are only retained in the editor).
+	Ref<Image> img = storage->texture_get_data(p_texture, 0);
+	if (img.is_null() || img->empty()) {
+		ERR_PRINT_ONCE("Could not read back a decal texture; it will not render");
+		return;
+	}
+	if (img->has_mipmaps()) {
+		img = img->duplicate();
+		img->clear_mipmaps();
+	}
+	if (img->get_format() != Image::FORMAT_RGBA8) {
+		img = img->duplicate();
+		img->convert(Image::FORMAT_RGBA8);
+	}
+
+	DecalAtlasSlice slice;
+	slice.texture = p_texture;
+	slice.image = img;
+	slice.size = Size2i(img->get_width(), img->get_height());
+	slice.region = Rect2(0, 0, 0, 0); // assigned by the packer
+	slice.uploaded = false;
+
+	decal_atlas_lookup[p_texture] = decal_atlas_slices.size();
+	decal_atlas_slices.push_back(slice);
+	decal_atlas_dirty = true;
+}
+
+void RasterizerSceneGLES3::_update_decal_atlas() {
+	if (!decal_atlas_dirty) {
+		return;
+	}
+	decal_atlas_dirty = false;
+
+	if (decal_atlas_slices.empty()) {
+		return;
+	}
+
+	int max_size = storage->config.max_texture_size;
+
+	// Shelf pack in insertion order: rect positions stay identical when the
+	// atlas grows, so slice rects never need remapping.
+	Size2i size = decal_atlas_size;
+	bool fits = false;
+	while (true) {
+		int x = 0, y = 0, row_h = 0;
+		fits = true;
+		for (int i = 0; i < decal_atlas_slices.size(); i++) {
+			Size2i s = decal_atlas_slices[i].size;
+			if (x + s.x > size.x) {
+				x = 0;
+				y += row_h;
+				row_h = 0;
+			}
+			if (x + s.x > size.x || y + s.y > size.y) {
+				fits = false;
+				break;
+			}
+			decal_atlas_slices.write[i].region = Rect2(
+					float(x) / size.x,
+					float(y) / size.y,
+					float(s.x) / size.x,
+					float(s.y) / size.y);
+			x += s.x;
+			row_h = MAX(row_h, s.y);
+		}
+		if (fits || (size.x >= max_size && size.y >= max_size)) {
+			break;
+		}
+		size = Size2i(MIN(size.x * 2, max_size), MIN(size.y * 2, max_size));
+	}
+
+	if (!fits) {
+		ERR_PRINT_ONCE("Decal atlas is full; some decal textures will not render");
+	}
+
+	if (!decal_atlas_tex || size != decal_atlas_size) {
+		// New canvas: recreate and upload every slice from its retained Image.
+		GLuint old_tex = decal_atlas_tex;
+		decal_atlas_size = size;
+		glGenTextures(1, &decal_atlas_tex);
+		WRAPPED_GL_ACTIVE_TEXTURE(GL_TEXTURE0 + storage->config.max_texture_image_units - 14);
+		glBindTexture(GL_TEXTURE_2D, decal_atlas_tex);
+		// Linear container holding sRGB-encoded bytes; the decal shader decodes
+		// sampled values itself (same scheme as the Godot 4 Compatibility
+		// renderer). glCopyImageSubData-style raw copies stay format-compatible.
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, decal_atlas_size.x, decal_atlas_size.y, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+		if (old_tex) {
+			glDeleteTextures(1, &old_tex);
+		}
+
+		for (int i = 0; i < decal_atlas_slices.size(); i++) {
+			decal_atlas_slices.write[i].uploaded = false;
+		}
+	}
+
+	for (int i = 0; i < decal_atlas_slices.size(); i++) {
+		DecalAtlasSlice &s = decal_atlas_slices.write[i];
+		if (s.uploaded || s.region.size.x <= 0.0 || s.region.size.y <= 0.0) {
+			continue;
+		}
+		WRAPPED_GL_ACTIVE_TEXTURE(GL_TEXTURE0 + storage->config.max_texture_image_units - 14);
+		glBindTexture(GL_TEXTURE_2D, decal_atlas_tex);
+		PoolVector<uint8_t>::Read r = s.image->get_data().read();
+		glTexSubImage2D(GL_TEXTURE_2D, 0,
+				int(s.region.position.x * decal_atlas_size.x),
+				int(s.region.position.y * decal_atlas_size.y),
+				s.size.x, s.size.y,
+				GL_RGBA, GL_UNSIGNED_BYTE, r.ptr());
+		s.uploaded = true;
+	}
+}
+
+void RasterizerSceneGLES3::_setup_decals(InstanceBase **p_decal_cull_result, int p_decal_cull_count, const Transform &p_cam_transform) {
+	state.decal_count = 0;
+
+	if (p_decal_cull_count <= 0) {
+		return;
+	}
+
+	// Every source texture used by a visible decal needs an atlas slice.
+	for (int i = 0; i < p_decal_cull_count; i++) {
+		InstanceBase *ins = p_decal_cull_result[i];
+		RasterizerStorageGLES3::Decal *decal = storage->decal_owner.getornull(ins->base);
+		ERR_CONTINUE(!decal);
+
+		for (int c = VS::DECAL_TEXTURE_ALBEDO; c <= VS::DECAL_TEXTURE_EMISSION; c++) {
+			if (c == VS::DECAL_TEXTURE_NORMAL || c == VS::DECAL_TEXTURE_ORM) {
+				continue; // channels not wired in this renderer yet
+			}
+			if (decal->textures[c].is_valid()) {
+				_decal_atlas_add(decal->textures[c]);
+			}
+		}
+	}
+
+	_update_decal_atlas();
+
+	// The atlas stays bound on its dedicated unit for the whole pass; decal
+	// variants pick it up from texunit:-14.
+	WRAPPED_GL_ACTIVE_TEXTURE(GL_TEXTURE0 + storage->config.max_texture_image_units - 14);
+	glBindTexture(GL_TEXTURE_2D, decal_atlas_tex);
+
+	Transform view_inverse = p_cam_transform.affine_inverse();
+	Vector3 cam_origin = p_cam_transform.origin;
+
+	for (int i = 0; i < p_decal_cull_count && i < state.max_decals; i++) {
+		InstanceBase *ins = p_decal_cull_result[i];
+		RasterizerStorageGLES3::Decal *decal = storage->decal_owner.getornull(ins->base);
+		ERR_CONTINUE(!decal);
+
+		int idx = i; // UBO slots match the (camera-distance sorted) cull order the masks were built with
+		DecalDataUBO &ubo = *(DecalDataUBO *)(state.decal_array_tmp + idx * sizeof(DecalDataUBO));
+
+		// Projection: view-space position -> decal box space. Local x,z map to
+		// 0..1 (texture plane, sampled with the atlas rects) and local y to
+		// -1..1 (thickness axis, used by the fades). Godot 4 semantics: the
+		// decal projects along its local -Y.
+		Transform to_local = ins->transform.affine_inverse() * p_cam_transform;
+		Vector3 size = decal->size;
+
+		Transform uv_map;
+		uv_map.basis.elements[0][0] = 1.0 / size.x;
+		uv_map.basis.elements[1][1] = 2.0 / size.y;
+		uv_map.basis.elements[2][2] = 1.0 / size.z;
+		uv_map.origin = Vector3(0.5, 0.0, 0.5);
+
+		store_transform(uv_map * to_local, ubo.xform);
+
+#ifdef DECALDBG
+		{
+			Vector3 view_origin = view_inverse.xform(Vector3(0, 0, 0));
+			Vector3 uv_dbg = (uv_map * to_local).xform(view_origin);
+			print_line("DECALDBG uv_at_world_origin=" + uv_dbg + " decal_origin=" + ins->transform.origin);
+		}
+#endif
+
+		for (int c = 0; c <= VS::DECAL_TEXTURE_EMISSION; c++) {
+			float *rect = (c == VS::DECAL_TEXTURE_ALBEDO) ? ubo.albedo_rect : (c == VS::DECAL_TEXTURE_EMISSION) ? ubo.emission_rect : (c == VS::DECAL_TEXTURE_NORMAL) ? ubo.normal_rect : ubo.orm_rect;
+			rect[0] = 0.0;
+			rect[1] = 0.0;
+			rect[2] = 0.0;
+			rect[3] = 0.0;
+			if (c == VS::DECAL_TEXTURE_NORMAL || c == VS::DECAL_TEXTURE_ORM) {
+				continue; // channels not wired in this renderer yet
+			}
+			if (decal->textures[c].is_valid() && decal_atlas_lookup.has(decal->textures[c])) {
+				const DecalAtlasSlice &s = decal_atlas_slices[decal_atlas_lookup[decal->textures[c]]];
+				if (s.uploaded) {
+					rect[0] = s.region.position.x;
+					rect[1] = s.region.position.y;
+					rect[2] = s.region.size.x;
+					rect[3] = s.region.size.y;
+				}
+			}
+		}
+
+		Color modulate = decal->modulate;
+		if (decal->distance_fade_enabled) {
+			float dist = (ins->transform.origin - cam_origin).length();
+			float transitional = MAX(decal->distance_fade_transitional, 0.001);
+			// Fades out approaching distance_fade_far, and (optionally) fades
+			// in once the camera is farther than distance_fade_near.
+			modulate.a *= CLAMP((decal->distance_fade_far - dist) / transitional, 0.0, 1.0);
+			if (decal->distance_fade_near > 0.0) {
+				modulate.a *= CLAMP((dist - decal->distance_fade_near) / transitional, 0.0, 1.0);
+			}
+		}
+		ubo.modulate[0] = modulate.r;
+		ubo.modulate[1] = modulate.g;
+		ubo.modulate[2] = modulate.b;
+		ubo.modulate[3] = modulate.a;
+
+		ubo.params[0] = decal->emission_energy;
+		ubo.params[1] = decal->upper_fade;
+		ubo.params[2] = decal->lower_fade;
+		ubo.params[3] = decal->albedo_mix;
+
+		// Decal +Z axis in view space (surface-facing normal for normal_fade).
+		Vector3 decal_normal = view_inverse.basis.xform(ins->transform.basis.get_axis(2)).normalized();
+		ubo.normal_and_fade[0] = decal_normal.x;
+		ubo.normal_and_fade[1] = decal_normal.y;
+		ubo.normal_and_fade[2] = decal_normal.z;
+		ubo.normal_and_fade[3] = 0.0; // normal_fade not wired yet
+
+		state.decal_count++;
+	}
+
+	if (state.decal_count) {
+		glBindBuffer(GL_UNIFORM_BUFFER, state.decal_array_ubo);
+		glBufferSubData(GL_UNIFORM_BUFFER, 0, state.decal_count * sizeof(DecalDataUBO), state.decal_array_tmp);
+		glBindBuffer(GL_UNIFORM_BUFFER, 0);
+	}
+
+	glBindBufferBase(GL_UNIFORM_BUFFER, 7, state.decal_array_ubo);
+}
+
 void RasterizerSceneGLES3::_prepare_depth_texture() {
 	if (!state.prepared_depth_texture) {
 		//resolve depth buffer
@@ -4118,7 +4422,7 @@ bool RasterizerSceneGLES3::_element_needs_directional_add(RenderList::Element *e
 	return false; // no visible unbaked light
 }
 
-void RasterizerSceneGLES3::render_scene(const Transform &p_cam_transform, const CameraMatrix &p_cam_projection, const int p_eye, bool p_cam_ortogonal, InstanceBase **p_cull_result, int p_cull_count, RID *p_light_cull_result, int p_light_cull_count, RID *p_reflection_probe_cull_result, int p_reflection_probe_cull_count, RID p_environment, RID p_shadow_atlas, RID p_reflection_atlas, RID p_reflection_probe, int p_reflection_probe_pass) {
+void RasterizerSceneGLES3::render_scene(const Transform &p_cam_transform, const CameraMatrix &p_cam_projection, const int p_eye, bool p_cam_ortogonal, InstanceBase **p_cull_result, int p_cull_count, RID *p_light_cull_result, int p_light_cull_count, RID *p_reflection_probe_cull_result, int p_reflection_probe_cull_count, InstanceBase **p_decal_cull_result, int p_decal_cull_count, RID p_environment, RID p_shadow_atlas, RID p_reflection_atlas, RID p_reflection_probe, int p_reflection_probe_pass) {
 	//first of all, make a new render pass
 	render_pass++;
 
@@ -4248,6 +4552,7 @@ void RasterizerSceneGLES3::render_scene(const Transform &p_cam_transform, const 
 
 	_setup_lights(p_light_cull_result, p_light_cull_count, p_cam_transform.affine_inverse(), p_cam_projection, p_shadow_atlas);
 	_setup_reflections(p_reflection_probe_cull_result, p_reflection_probe_cull_count, p_cam_transform.affine_inverse(), p_cam_projection, p_reflection_atlas, env);
+	_setup_decals(p_decal_cull_result, p_decal_cull_count, p_cam_transform);
 
 	bool use_mrt = false;
 
@@ -5216,6 +5521,21 @@ void RasterizerSceneGLES3::initialize() {
 
 		state.scene_shader.add_custom_define("#define MAX_REFLECTION_DATA_STRUCTS " + itos(state.max_ubo_reflections) + "\n");
 
+		state.max_decals = MIN(MAX_DECALS, max_ubo_size / (int)sizeof(DecalDataUBO));
+
+		state.decal_array_tmp = (uint8_t *)memalloc(sizeof(DecalDataUBO) * state.max_decals);
+
+		glGenBuffers(1, &state.decal_array_ubo);
+		glBindBuffer(GL_UNIFORM_BUFFER, state.decal_array_ubo);
+		glBufferData(GL_UNIFORM_BUFFER, sizeof(DecalDataUBO) * state.max_decals, nullptr, GL_DYNAMIC_DRAW);
+		glBindBuffer(GL_UNIFORM_BUFFER, 0);
+
+		state.scene_shader.add_custom_define("#define MAX_DECALS " + itos(state.max_decals) + "\n");
+
+		decal_atlas_tex = 0;
+		decal_atlas_size = Size2i(256, 256);
+		decal_atlas_dirty = false;
+
 		state.max_skeleton_bones = MIN(2048, max_ubo_size / (12 * sizeof(float)));
 		state.scene_shader.add_custom_define("#define MAX_SKELETON_BONES " + itos(state.max_skeleton_bones) + "\n");
 	}
@@ -5390,10 +5710,14 @@ void RasterizerSceneGLES3::iteration() {
 }
 
 void RasterizerSceneGLES3::finalize() {
+	_decal_atlas_clear();
 }
 
 RasterizerSceneGLES3::RasterizerSceneGLES3() {
 	directional_shadow_size = next_power_of_2(int(GLOBAL_GET("rendering/quality/directional_shadow/size")));
+
+	state.decal_count = 0;
+	state.max_decals = MAX_DECALS;
 }
 
 RasterizerSceneGLES3::~RasterizerSceneGLES3() {
@@ -5423,4 +5747,5 @@ RasterizerSceneGLES3::~RasterizerSceneGLES3() {
 	memfree(state.spot_array_tmp);
 	memfree(state.omni_array_tmp);
 	memfree(state.reflection_array_tmp);
+	memfree(state.decal_array_tmp);
 }

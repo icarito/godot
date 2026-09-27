@@ -269,6 +269,22 @@ public:
 	FUNC2(light_directional_set_blend_splits, RID, bool)
 	FUNC2(light_directional_set_shadow_depth_range_mode, RID, LightDirectionalShadowDepthRangeMode)
 
+	/* DECAL API */
+
+	FUNCRID(decal)
+
+	FUNC2(decal_set_size, RID, const Vector3 &)
+	FUNC3(decal_set_texture, RID, DecalTexture, RID)
+	FUNC2(decal_set_emission_energy, RID, float)
+	FUNC2(decal_set_albedo_mix, RID, float)
+	FUNC2(decal_set_modulate, RID, const Color &)
+	FUNC2(decal_set_upper_fade, RID, float)
+	FUNC2(decal_set_lower_fade, RID, float)
+	FUNC2(decal_set_normal_fade, RID, float)
+	FUNC2(decal_set_cull_mask, RID, uint32_t)
+	FUNC5(decal_set_distance_fade, RID, bool, float, float, float)
+	FUNC1RC(AABB, decal_get_aabb, RID)
+
 	/* PROBE API */
 
 	FUNCRID(reflection_probe)

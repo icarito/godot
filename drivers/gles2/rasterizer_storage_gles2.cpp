@@ -4667,6 +4667,64 @@ int RasterizerStorageGLES2::reflection_probe_get_resolution(RID p_probe) const {
 	return reflection_probe->resolution;
 }
 
+RID RasterizerStorageGLES2::decal_create() {
+	Decal *decal = memnew(Decal);
+	return decal_owner.make_rid(decal);
+}
+
+void RasterizerStorageGLES2::decal_set_size(RID p_decal, const Vector3 &p_size) {
+	Decal *decal = decal_owner.getornull(p_decal);
+	ERR_FAIL_COND(!decal);
+
+	decal->size = p_size;
+	decal->instance_change_notify(true, false);
+}
+
+void RasterizerStorageGLES2::decal_set_texture(RID p_decal, VS::DecalTexture p_type, RID p_texture) {
+}
+
+void RasterizerStorageGLES2::decal_set_emission_energy(RID p_decal, float p_energy) {
+}
+
+void RasterizerStorageGLES2::decal_set_albedo_mix(RID p_decal, float p_mix) {
+}
+
+void RasterizerStorageGLES2::decal_set_modulate(RID p_decal, const Color &p_modulate) {
+}
+
+void RasterizerStorageGLES2::decal_set_upper_fade(RID p_decal, float p_amount) {
+}
+
+void RasterizerStorageGLES2::decal_set_lower_fade(RID p_decal, float p_amount) {
+}
+
+void RasterizerStorageGLES2::decal_set_normal_fade(RID p_decal, float p_fade) {
+}
+
+void RasterizerStorageGLES2::decal_set_cull_mask(RID p_decal, uint32_t p_layers) {
+	Decal *decal = decal_owner.getornull(p_decal);
+	ERR_FAIL_COND(!decal);
+
+	decal->cull_mask = p_layers;
+}
+
+void RasterizerStorageGLES2::decal_set_distance_fade(RID p_decal, bool p_enabled, float p_near, float p_far, float p_transitional) {
+}
+
+AABB RasterizerStorageGLES2::decal_get_aabb(RID p_decal) const {
+	const Decal *decal = decal_owner.getornull(p_decal);
+	ERR_FAIL_COND_V(!decal, AABB());
+
+	return AABB(-decal->size / 2.0, decal->size);
+}
+
+uint32_t RasterizerStorageGLES2::decal_get_cull_mask(RID p_decal) const {
+	const Decal *decal = decal_owner.getornull(p_decal);
+	ERR_FAIL_COND_V(!decal, 0);
+
+	return decal->cull_mask;
+}
+
 RID RasterizerStorageGLES2::gi_probe_create() {
 	return RID();
 }
@@ -5020,6 +5078,10 @@ void RasterizerStorageGLES2::instance_add_dependency(RID p_base, RasterizerScene
 			inst = lightmap_capture_data_owner.getornull(p_base);
 			ERR_FAIL_COND(!inst);
 		} break;
+		case VS::INSTANCE_DECAL: {
+			inst = decal_owner.getornull(p_base);
+			ERR_FAIL_COND(!inst);
+		} break;
 		default: {
 			ERR_FAIL();
 		}
@@ -5062,6 +5124,10 @@ void RasterizerStorageGLES2::instance_remove_dependency(RID p_base, RasterizerSc
 		} break; */
 		case VS::INSTANCE_LIGHTMAP_CAPTURE: {
 			inst = lightmap_capture_data_owner.getornull(p_base);
+			ERR_FAIL_COND(!inst);
+		} break;
+		case VS::INSTANCE_DECAL: {
+			inst = decal_owner.getornull(p_base);
 			ERR_FAIL_COND(!inst);
 		} break;
 		default: {
@@ -5970,6 +6036,8 @@ VS::InstanceType RasterizerStorageGLES2::get_base_type(RID p_rid) const {
 		return VS::INSTANCE_REFLECTION_PROBE;
 	} else if (lightmap_capture_data_owner.owns(p_rid)) {
 		return VS::INSTANCE_LIGHTMAP_CAPTURE;
+	} else if (decal_owner.owns(p_rid)) {
+		return VS::INSTANCE_DECAL;
 	} else {
 		return VS::INSTANCE_NONE;
 	}
@@ -6167,6 +6235,14 @@ bool RasterizerStorageGLES2::free(RID p_rid) {
 
 		lightmap_capture_data_owner.free(p_rid);
 		memdelete(lightmap_capture);
+		return true;
+
+	} else if (decal_owner.owns(p_rid)) {
+		Decal *decal = decal_owner.get(p_rid);
+		decal->instance_remove_deps();
+
+		decal_owner.free(p_rid);
+		memdelete(decal);
 		return true;
 
 	} else if (canvas_occluder_owner.owns(p_rid)) {

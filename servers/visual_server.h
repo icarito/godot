@@ -854,6 +854,28 @@ public:
 	virtual void scenario_set_reflection_atlas_size(RID p_scenario, int p_size, int p_subdiv) = 0;
 	virtual void scenario_set_fallback_environment(RID p_scenario, RID p_environment) = 0;
 
+	/* DECAL API */
+
+	enum DecalTexture {
+		DECAL_TEXTURE_ALBEDO,
+		DECAL_TEXTURE_NORMAL,
+		DECAL_TEXTURE_ORM,
+		DECAL_TEXTURE_EMISSION
+	};
+
+	virtual RID decal_create() = 0;
+	virtual void decal_set_size(RID p_decal, const Vector3 &p_size) = 0;
+	virtual void decal_set_texture(RID p_decal, DecalTexture p_type, RID p_texture) = 0;
+	virtual void decal_set_emission_energy(RID p_decal, float p_energy) = 0;
+	virtual void decal_set_albedo_mix(RID p_decal, float p_mix) = 0;
+	virtual void decal_set_modulate(RID p_decal, const Color &p_modulate) = 0;
+	virtual void decal_set_upper_fade(RID p_decal, float p_amount) = 0;
+	virtual void decal_set_lower_fade(RID p_decal, float p_amount) = 0;
+	virtual void decal_set_normal_fade(RID p_decal, float p_fade) = 0;
+	virtual void decal_set_cull_mask(RID p_decal, uint32_t p_layers) = 0;
+	virtual void decal_set_distance_fade(RID p_decal, bool p_enabled, float p_near, float p_far, float p_transitional) = 0;
+	virtual AABB decal_get_aabb(RID p_decal) const = 0;
+
 	/* INSTANCING API */
 
 	enum InstanceType {
@@ -867,6 +889,7 @@ public:
 		INSTANCE_REFLECTION_PROBE,
 		INSTANCE_GI_PROBE,
 		INSTANCE_LIGHTMAP_CAPTURE,
+		INSTANCE_DECAL,
 		INSTANCE_MAX,
 
 		INSTANCE_GEOMETRY_MASK = (1 << INSTANCE_MESH) | (1 << INSTANCE_MULTIMESH) | (1 << INSTANCE_IMMEDIATE) | (1 << INSTANCE_PARTICLES)

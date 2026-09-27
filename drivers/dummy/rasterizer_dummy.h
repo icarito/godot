@@ -106,7 +106,7 @@ public:
 	void gi_probe_instance_set_transform_to_data(RID p_probe, const Transform &p_xform) {}
 	void gi_probe_instance_set_bounds(RID p_probe, const Vector3 &p_bounds) {}
 
-	void render_scene(const Transform &p_cam_transform, const CameraMatrix &p_cam_projection, const int p_eye, bool p_cam_ortogonal, InstanceBase **p_cull_result, int p_cull_count, RID *p_light_cull_result, int p_light_cull_count, RID *p_reflection_probe_cull_result, int p_reflection_probe_cull_count, RID p_environment, RID p_shadow_atlas, RID p_reflection_atlas, RID p_reflection_probe, int p_reflection_probe_pass) {}
+	void render_scene(const Transform &p_cam_transform, const CameraMatrix &p_cam_projection, const int p_eye, bool p_cam_ortogonal, InstanceBase **p_cull_result, int p_cull_count, RID *p_light_cull_result, int p_light_cull_count, RID *p_reflection_probe_cull_result, int p_reflection_probe_cull_count, InstanceBase **p_decal_cull_result, int p_decal_cull_count, RID p_environment, RID p_shadow_atlas, RID p_reflection_atlas, RID p_reflection_probe, int p_reflection_probe_pass) {}
 	void render_shadow(RID p_light, RID p_shadow_atlas, int p_pass, InstanceBase **p_cull_result, int p_cull_count) {}
 
 	void set_scene_pass(uint64_t p_pass) {}
@@ -555,6 +555,48 @@ public:
 	float reflection_probe_get_origin_max_distance(RID p_probe) const { return 0.0; }
 	bool reflection_probe_renders_shadows(RID p_probe) const { return false; }
 
+	/* DECAL API */
+
+	struct DummyDecal : public RID_Data {
+		Vector3 size = Vector3(2, 2, 2);
+	};
+
+	mutable RID_Owner<DummyDecal> decal_owner;
+
+	RID decal_create() {
+		DummyDecal *decal = memnew(DummyDecal);
+		ERR_FAIL_COND_V(!decal, RID());
+		return decal_owner.make_rid(decal);
+	}
+
+	void decal_set_size(RID p_decal, const Vector3 &p_size) {
+		DummyDecal *decal = decal_owner.getornull(p_decal);
+		if (decal) {
+			decal->size = p_size;
+		}
+	}
+	void decal_set_texture(RID p_decal, VS::DecalTexture p_type, RID p_texture) {}
+	void decal_set_emission_energy(RID p_decal, float p_energy) {}
+	void decal_set_albedo_mix(RID p_decal, float p_mix) {}
+	void decal_set_modulate(RID p_decal, const Color &p_modulate) {}
+	void decal_set_upper_fade(RID p_decal, float p_amount) {}
+	void decal_set_lower_fade(RID p_decal, float p_amount) {}
+	void decal_set_normal_fade(RID p_decal, float p_fade) {}
+	void decal_set_cull_mask(RID p_decal, uint32_t p_layers) {}
+	void decal_set_distance_fade(RID p_decal, bool p_enabled, float p_near, float p_far, float p_transitional) {}
+
+	AABB decal_get_aabb(RID p_decal) const {
+		DummyDecal *decal = decal_owner.getornull(p_decal);
+		if (decal) {
+			return AABB(-decal->size / 2.0, decal->size);
+		}
+		return AABB();
+	}
+
+	uint32_t decal_get_cull_mask(RID p_decal) const {
+		return 0xFFFFFFFF;
+	}
+
 	void instance_add_skeleton(RID p_skeleton, RasterizerScene::InstanceBase *p_instance) {}
 	void instance_remove_skeleton(RID p_skeleton, RasterizerScene::InstanceBase *p_instance) {}
 
@@ -737,6 +779,8 @@ public:
 			return VS::INSTANCE_MESH;
 		} else if (lightmap_capture_data_owner.owns(p_rid)) {
 			return VS::INSTANCE_LIGHTMAP_CAPTURE;
+		} else if (decal_owner.owns(p_rid)) {
+			return VS::INSTANCE_DECAL;
 		}
 
 		return VS::INSTANCE_NONE;
@@ -758,6 +802,10 @@ public:
 			LightmapCapture *lightmap_capture = lightmap_capture_data_owner.getornull(p_rid);
 			lightmap_capture_data_owner.free(p_rid);
 			memdelete(lightmap_capture);
+		} else if (decal_owner.owns(p_rid)) {
+			DummyDecal *decal = decal_owner.getornull(p_rid);
+			decal_owner.free(p_rid);
+			memdelete(decal);
 		} else {
 			return false;
 		}

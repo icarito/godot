@@ -1664,6 +1664,41 @@ vec4 textureArray_bicubic(sampler2DArray tex, vec3 uv) {
 uniform mediump vec4[12] lightmap_captures;
 #endif //ubershader-skip
 
+// Screen-space box decals, Godot 4 Compatibility-renderer style: per-object
+// slots index into a DecalData UBO and the atlas carries every decal texture.
+// One extra sampler (texunit:-14) and one UBO binding (ubo:7). normal/orm
+// rects are reserved but not wired in this renderer yet.
+#ifdef USE_DECALS //ubershader-skip
+
+vec3 decal_srgb_to_linear(vec3 srgb) {
+	return mix(
+			pow((srgb + vec3(0.055)) * (1.0 / (1.0 + 0.055)), vec3(2.4)),
+			srgb * (1.0 / 12.92),
+			lessThan(srgb, vec3(0.04045)));
+}
+
+struct DecalData {
+	mat4 xform;
+	vec4 albedo_rect;
+	vec4 emission_rect;
+	vec4 normal_rect;
+	vec4 orm_rect;
+	vec4 modulate;
+	vec4 params; // emission_energy, upper_fade, lower_fade, albedo_mix
+	vec4 normal_and_fade; // xyz = decal +Z in view space, w = normal_fade
+};
+
+layout(std140) uniform DecalDataBlock { //ubo:7
+	DecalData data[MAX_DECALS];
+} decal_data_block;
+
+uniform mediump sampler2D decal_atlas; // texunit:-14
+uniform int decal_count;
+uniform vec4 decal_slots0;
+uniform vec4 decal_slots1;
+
+#endif //USE_DECALS //ubershader-skip
+
 // A project with no GIProbe still paid for these two sampler3D units in every
 // ubershader, because //ubershader-skip drops the guard and leaves the declarations
 // unconditional. rendering/quality/gi_probes/enabled lets such a project hand the
@@ -1990,6 +2025,60 @@ FRAGMENT_SHADER_CODE
 	vec3 env_reflection_light = vec3(0.0, 0.0, 0.0);
 
 	vec3 eye_vec = view;
+
+#ifdef USE_DECALS //ubershader-runtime
+	for (int i = 0; i < decal_count; i++) {
+		int decal_index;
+		if (i < 4) {
+			decal_index = int(decal_slots0[i] + 0.5) - 1;
+		} else {
+			decal_index = int(decal_slots1[i - 4] + 0.5) - 1;
+		}
+		if (decal_index < 0 || decal_index >= MAX_DECALS) {
+			break;
+		}
+
+		vec3 uv_local = (decal_data_block.data[decal_index].xform * vec4(vertex, 1.0)).xyz;
+		if (any(lessThan(uv_local, vec3(0.0, -1.0, 0.0))) || any(greaterThan(uv_local, vec3(1.0)))) {
+			continue; //out of decal
+		}
+
+		float fade = pow(1.0 - abs(uv_local.y), uv_local.y > 0.0 ? decal_data_block.data[decal_index].params.y : decal_data_block.data[decal_index].params.z);
+
+		if (decal_data_block.data[decal_index].normal_and_fade.w > 0.0) {
+			fade *= smoothstep(decal_data_block.data[decal_index].normal_and_fade.w, 1.0, dot(normalize(normal_interp), decal_data_block.data[decal_index].normal_and_fade.xyz) * 0.5 + 0.5);
+		}
+
+		if (decal_data_block.data[decal_index].albedo_rect != vec4(0.0)) {
+			//the atlas holds sRGB-encoded bytes; decode once here, like a material's sRGB texture would
+			vec4 decal_albedo = textureLod(decal_atlas, uv_local.xz * decal_data_block.data[decal_index].albedo_rect.zw + decal_data_block.data[decal_index].albedo_rect.xy, 0.0);
+			decal_albedo.rgb = decal_srgb_to_linear(decal_albedo.rgb) * decal_data_block.data[decal_index].modulate.rgb;
+			decal_albedo.a *= fade * decal_data_block.data[decal_index].modulate.a;
+			albedo = vec3(mix(vec3(albedo), decal_albedo.rgb, decal_albedo.a * decal_data_block.data[decal_index].params.w));
+
+			if (decal_data_block.data[decal_index].normal_rect != vec4(0.0)) {
+				vec3 decal_normal = textureLod(decal_atlas, uv_local.xz * decal_data_block.data[decal_index].normal_rect.zw + decal_data_block.data[decal_index].normal_rect.xy, 0.0).xyz;
+				decal_normal.xy = decal_normal.xy * vec2(2.0, -2.0) - vec2(1.0, -1.0);
+				decal_normal.z = sqrt(max(0.0, 1.0 - dot(decal_normal.xy, decal_normal.xy)));
+				normal = vec3(normalize(mix(vec3(normal), decal_normal, decal_albedo.a)));
+			}
+
+			if (decal_data_block.data[decal_index].orm_rect != vec4(0.0)) {
+				vec3 decal_orm = textureLod(decal_atlas, uv_local.xz * decal_data_block.data[decal_index].orm_rect.zw + decal_data_block.data[decal_index].orm_rect.xy, 0.0).xyz;
+				roughness = mix(float(roughness), decal_orm.g, decal_albedo.a);
+				metallic = mix(float(metallic), decal_orm.b, decal_albedo.a);
+#if defined(ENABLE_AO)
+				ao = mix(float(ao), decal_orm.r, decal_albedo.a);
+#endif
+			}
+		}
+
+		if (decal_data_block.data[decal_index].emission_rect != vec4(0.0)) {
+			//emission is additive, so it is independent from albedo
+			emission += decal_srgb_to_linear(textureLod(decal_atlas, uv_local.xz * decal_data_block.data[decal_index].emission_rect.zw + decal_data_block.data[decal_index].emission_rect.xy, 0.0).xyz) * decal_data_block.data[decal_index].modulate.rgb * decal_data_block.data[decal_index].params.x * fade;
+		}
+	}
+#endif //USE_DECALS //ubershader-runtime
 
 	// IBL precalculations
 	float ndotv = clamp(dot(normal, eye_vec), 0.0, 1.0);

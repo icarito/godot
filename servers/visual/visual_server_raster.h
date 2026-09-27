@@ -343,6 +343,22 @@ public:
 	BIND2(light_directional_set_blend_splits, RID, bool)
 	BIND2(light_directional_set_shadow_depth_range_mode, RID, LightDirectionalShadowDepthRangeMode)
 
+	/* DECAL API */
+
+	BIND0R(RID, decal_create)
+
+	BIND2(decal_set_size, RID, const Vector3 &)
+	BIND3(decal_set_texture, RID, DecalTexture, RID)
+	BIND2(decal_set_emission_energy, RID, float)
+	BIND2(decal_set_albedo_mix, RID, float)
+	BIND2(decal_set_modulate, RID, const Color &)
+	BIND2(decal_set_upper_fade, RID, float)
+	BIND2(decal_set_lower_fade, RID, float)
+	BIND2(decal_set_normal_fade, RID, float)
+	BIND2(decal_set_cull_mask, RID, uint32_t)
+	BIND5(decal_set_distance_fade, RID, bool, float, float, float)
+	BIND1RC(AABB, decal_get_aabb, RID)
+
 	/* PROBE API */
 
 	BIND0R(RID, reflection_probe_create)

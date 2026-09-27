@@ -1055,6 +1055,29 @@ public:
 	virtual float reflection_probe_get_origin_max_distance(RID p_probe) const;
 	virtual bool reflection_probe_renders_shadows(RID p_probe) const;
 
+	/* DECAL API */
+
+	struct Decal : Instantiable {
+		Vector3 size = Vector3(2, 2, 2);
+		uint32_t cull_mask = 0xFFFFFFFF;
+	};
+
+	mutable RID_Owner<Decal> decal_owner;
+
+	virtual RID decal_create();
+	virtual void decal_set_size(RID p_decal, const Vector3 &p_size);
+	virtual void decal_set_texture(RID p_decal, VS::DecalTexture p_type, RID p_texture);
+	virtual void decal_set_emission_energy(RID p_decal, float p_energy);
+	virtual void decal_set_albedo_mix(RID p_decal, float p_mix);
+	virtual void decal_set_modulate(RID p_decal, const Color &p_modulate);
+	virtual void decal_set_upper_fade(RID p_decal, float p_amount);
+	virtual void decal_set_lower_fade(RID p_decal, float p_amount);
+	virtual void decal_set_normal_fade(RID p_decal, float p_fade);
+	virtual void decal_set_cull_mask(RID p_decal, uint32_t p_layers);
+	virtual void decal_set_distance_fade(RID p_decal, bool p_enabled, float p_near, float p_far, float p_transitional);
+	virtual AABB decal_get_aabb(RID p_decal) const;
+	virtual uint32_t decal_get_cull_mask(RID p_decal) const;
+
 	/* GI PROBE API */
 	virtual RID gi_probe_create();
 

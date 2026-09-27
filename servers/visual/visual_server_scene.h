@@ -52,6 +52,7 @@ public:
 		MAX_INSTANCE_CULL = 65536,
 		MAX_LIGHTS_CULLED = 4096,
 		MAX_REFLECTION_PROBES_CULLED = 4096,
+		MAX_DECALS_CULLED = 256,
 		MAX_ROOM_CULL = 32,
 		MAX_EXTERIOR_PORTALS = 128,
 	};
@@ -652,6 +653,8 @@ public:
 	VisualServerLightCuller *light_culler;
 	RID reflection_probe_instance_cull_result[MAX_REFLECTION_PROBES_CULLED];
 	int reflection_probe_cull_count;
+	Instance *decal_cull_result[MAX_DECALS_CULLED];
+	int decal_cull_count;
 
 	RID_Owner<Instance> instance_owner;
 

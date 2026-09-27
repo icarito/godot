@@ -122,6 +122,11 @@ public:
 		bool baked_light : 1; //this flag is only to know if it actually did use baked light
 		bool redraw_if_visible : 1;
 
+		// Per-frame indices of the decals affecting this instance, packed as
+		// 8 bytes (one index per byte, order matches the DecalData UBO). Written
+		// by the scene cull each pass; renderers that support decals read it.
+		uint64_t decal_mask;
+
 		bool on_interpolate_list : 1;
 		bool on_interpolate_transform_list : 1;
 		bool interpolated : 1;
@@ -154,6 +159,7 @@ public:
 			layer_mask = 1;
 			baked_light = false;
 			redraw_if_visible = false;
+			decal_mask = 0;
 			lightmap_capture = nullptr;
 			lightmap_slice = -1;
 			lightmap_uv_rect = Rect2(0, 0, 1, 1);
@@ -189,7 +195,7 @@ public:
 	virtual void gi_probe_instance_set_transform_to_data(RID p_probe, const Transform &p_xform) = 0;
 	virtual void gi_probe_instance_set_bounds(RID p_probe, const Vector3 &p_bounds) = 0;
 
-	virtual void render_scene(const Transform &p_cam_transform, const CameraMatrix &p_cam_projection, const int p_eye, bool p_cam_ortogonal, InstanceBase **p_cull_result, int p_cull_count, RID *p_light_cull_result, int p_light_cull_count, RID *p_reflection_probe_cull_result, int p_reflection_probe_cull_count, RID p_environment, RID p_shadow_atlas, RID p_reflection_atlas, RID p_reflection_probe, int p_reflection_probe_pass) = 0;
+	virtual void render_scene(const Transform &p_cam_transform, const CameraMatrix &p_cam_projection, const int p_eye, bool p_cam_ortogonal, InstanceBase **p_cull_result, int p_cull_count, RID *p_light_cull_result, int p_light_cull_count, RID *p_reflection_probe_cull_result, int p_reflection_probe_cull_count, InstanceBase **p_decal_cull_result, int p_decal_cull_count, RID p_environment, RID p_shadow_atlas, RID p_reflection_atlas, RID p_reflection_probe, int p_reflection_probe_pass) = 0;
 	virtual void render_shadow(RID p_light, RID p_shadow_atlas, int p_pass, InstanceBase **p_cull_result, int p_cull_count) = 0;
 
 	virtual void set_scene_pass(uint64_t p_pass) = 0;
@@ -519,6 +525,22 @@ public:
 	virtual Vector3 reflection_probe_get_origin_offset(RID p_probe) const = 0;
 	virtual float reflection_probe_get_origin_max_distance(RID p_probe) const = 0;
 	virtual bool reflection_probe_renders_shadows(RID p_probe) const = 0;
+
+	/* DECAL API */
+
+	virtual RID decal_create() = 0;
+	virtual void decal_set_size(RID p_decal, const Vector3 &p_size) = 0;
+	virtual void decal_set_texture(RID p_decal, VS::DecalTexture p_type, RID p_texture) = 0;
+	virtual void decal_set_emission_energy(RID p_decal, float p_energy) = 0;
+	virtual void decal_set_albedo_mix(RID p_decal, float p_mix) = 0;
+	virtual void decal_set_modulate(RID p_decal, const Color &p_modulate) = 0;
+	virtual void decal_set_upper_fade(RID p_decal, float p_amount) = 0;
+	virtual void decal_set_lower_fade(RID p_decal, float p_amount) = 0;
+	virtual void decal_set_normal_fade(RID p_decal, float p_fade) = 0;
+	virtual void decal_set_cull_mask(RID p_decal, uint32_t p_layers) = 0;
+	virtual void decal_set_distance_fade(RID p_decal, bool p_enabled, float p_near, float p_far, float p_transitional) = 0;
+	virtual AABB decal_get_aabb(RID p_decal) const = 0;
+	virtual uint32_t decal_get_cull_mask(RID p_decal) const = 0;
 
 	virtual void instance_add_skeleton(RID p_skeleton, RasterizerScene::InstanceBase *p_instance) = 0;
 	virtual void instance_remove_skeleton(RID p_skeleton, RasterizerScene::InstanceBase *p_instance) = 0;
