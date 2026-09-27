@@ -8234,7 +8234,10 @@ void RasterizerStorageGLES3::initialize() {
 	// If the desktop build is using S3TC, and you export / run from the IDE for android, if the device supports
 	// S3TC it will crash trying to load these textures, as they are not exported in the APK. This is a simple way
 	// to prevent Android devices trying to load S3TC, by faking lack of hardware support.
-#if defined(ANDROID_ENABLED) || defined(IPHONE_ENABLED)
+	// The same applies to HTML5: WebGL2 advertises the S3TC extension, but ANGLE's
+	// compressed upload is unreliable and the decompress fallback does not exist on
+	// web, so the texture ends up black. ETC2 is the portable path there.
+#if defined(ANDROID_ENABLED) || defined(IPHONE_ENABLED) || defined(JAVASCRIPT_ENABLED)
 	config.s3tc_supported = false;
 #endif
 #endif
