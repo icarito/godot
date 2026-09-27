@@ -33,7 +33,9 @@ void main() {
 #define LOG_MAX_OFFSET (3)
 
 // This must be less than or equal to the MAX_MIP_LEVEL defined in SSAO.cpp
+#ifndef MAX_MIP_LEVEL
 #define MAX_MIP_LEVEL (4)
+#endif
 
 // This is the number of turns around the circle that the spiral pattern makes.  This should be prime to prevent
 // taps from lining up.  This particular choice was tuned for NUM_SAMPLES == 9

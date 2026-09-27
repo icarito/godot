@@ -3752,6 +3752,11 @@ void RasterizerSceneGLES3::_render_mrts(Environment *env, const CameraMatrix &p_
 		ss[0] = storage->frame.current_rt->width;
 		ss[1] = storage->frame.current_rt->height;
 
+#ifndef JAVASCRIPT_ENABLED
+		// On web the SSAO shader is built with MAX_MIP_LEVEL 0 (see initialize()),
+		// so this chain is never sampled and building it would only trip the
+		// WebGL feedback-loop check (each level is rendered while sampling the
+		// previous level of the same texture).
 		for (int i = 0; i < storage->frame.current_rt->effects.ssao.depth_mipmap_fbos.size(); i++) {
 			state.ssao_minify_shader.set_conditional(SsaoMinifyShaderGLES3::MINIFY_START, i == 0);
 			state.ssao_minify_shader.set_conditional(SsaoMinifyShaderGLES3::USE_ORTHOGONAL_PROJECTION, p_cam_projection.is_orthogonal());
@@ -3775,6 +3780,7 @@ void RasterizerSceneGLES3::_render_mrts(Environment *env, const CameraMatrix &p_
 
 			_copy_screen(true);
 		}
+#endif
 		ss[0] = storage->frame.current_rt->width;
 		ss[1] = storage->frame.current_rt->height;
 
@@ -5714,6 +5720,16 @@ void RasterizerSceneGLES3::initialize() {
 	if (bool(GLOBAL_GET("rendering/quality/gi_probes/enabled"))) {
 		state.scene_shader.add_custom_define("#define GI_PROBES_AVAILABLE\n");
 	}
+
+#ifdef JAVASCRIPT_ENABLED
+	// WebGL 2 forbids sampling a texture attached to the current framebuffer.
+	// The SSAO depth mip chain is built by rendering each level while sampling
+	// the previous level of the same texture, which ANGLE rejects as a feedback
+	// loop. Force the SSAO shader to read the full-resolution depth for every
+	// tap (correct, just a little slower) and skip building the chain in
+	// _render_scene.
+	state.ssao_shader.add_custom_define("#define MAX_MIP_LEVEL 0\n");
+#endif
 
 	shadow_filter_mode = SHADOW_FILTER_NEAREST;
 

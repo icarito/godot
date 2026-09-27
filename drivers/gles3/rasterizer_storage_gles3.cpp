@@ -7409,8 +7409,18 @@ void RasterizerStorageGLES3::_render_target_allocate(RenderTarget *rt) {
 			for (int i = 0; i < 2; i++) {
 				glGenFramebuffers(1, &rt->effects.ssao.blur_fbo[i]);
 				glBindFramebuffer(GL_FRAMEBUFFER, rt->effects.ssao.blur_fbo[i]);
+#ifndef JAVASCRIPT_ENABLED
+				// The SSAO and blur shaders sample the scene depth, and WebGL 2
+				// forbids sampling a texture attached to the current
+				// framebuffer: with this attachment every SSAO draw failed with
+				// "Feedback loop formed between Framebuffer and active Texture".
+				// It only existed for the GL_GREATER depth test around the SSAO
+				// passes, which the shaders do not need -- they already detect
+				// the skybox from the sampled depth (ssao.glsl) -- so on web the
+				// passes run without a depth buffer instead.
 				glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
 						GL_TEXTURE_2D, rt->depth, 0);
+#endif
 
 				glGenTextures(1, &rt->effects.ssao.blur_red[i]);
 				glBindTexture(GL_TEXTURE_2D, rt->effects.ssao.blur_red[i]);
