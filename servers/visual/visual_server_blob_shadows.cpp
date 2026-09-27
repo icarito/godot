@@ -245,7 +245,16 @@ int VisualServerBlobShadows::qsort_cmp_func(const void *a, const void *b) {
 	const SortFocusCaster *pa = (const SortFocusCaster *)a;
 	const SortFocusCaster *pb = (const SortFocusCaster *)b;
 
-	return (pa->distance > pb->distance);
+	// Must be a strict weak ordering: returning only 0/1 (never negative)
+	// is not a valid comparator and can produce scrambled output on some
+	// libc implementations (e.g. emscripten), letting the UINT32_MAX
+	// sentinel entries reach the front of the list.
+	if (pa->distance > pb->distance) {
+		return 1;
+	} else if (pa->distance < pb->distance) {
+		return -1;
+	}
+	return 0;
 }
 
 VisualServerBlobShadows::Focus *VisualServerBlobShadows::request_focus(uint32_t &r_handle) {
@@ -323,7 +332,11 @@ void VisualServerBlobShadows::update_focus_blobs_or_capsules(const Focus &p_focu
 				if (fc.last_update_frame == data.update_frame) {
 					fc.state = FocusCaster::FCS_ENTERING;
 				} else {
-					fc.in_count--;
+					// Clamp to avoid wrapping to UINT32_MAX, which would
+					// keep the caster stuck in the focus list forever.
+					if (fc.in_count) {
+						fc.in_count--;
+					}
 					fc.fraction = (real_t)fc.in_count / 60;
 					if (!fc.in_count) {
 						// Decrement ref count so we can free
@@ -368,12 +381,16 @@ void VisualServerBlobShadows::update_focus_blobs_or_capsules(const Focus &p_focu
 			ref_capsule(fc.caster_id + 1);
 		}
 
-		fi.blobs.push_back(fc);
-		fi.blobs_pending.pop();
-
+		// Set the initial fade state BEFORE the copy is pushed into the
+		// focus list, so the promoted entry starts at in_count == 1.
+		// (Writing after pop() would hit a dead slot and leave the copy
+		// with in_count == 0, which then underflows when fading out.)
 		fc.state = FocusCaster::FCS_ENTERING;
 		fc.in_count = 1;
 		fc.fraction = (real_t)fc.in_count / 60;
+
+		fi.blobs.push_back(fc);
+		fi.blobs_pending.pop();
 	}
 }
 
@@ -384,6 +401,14 @@ void VisualServerBlobShadows::update_focus(Focus &r_focus) {
 
 void VisualServerBlobShadows::update_focus_caster(bool p_blobs_or_capsules, FocusInfo &r_focus_info, const SortFocusCaster &p_sort_focus_caster) {
 	FocusInfo &fi = r_focus_info;
+
+	// UINT32_MAX is the sentinel used in the sort list for casters with no
+	// linked lights. It must never reach the focus lists: every caster_id is
+	// converted to a 1-based handle (+1) for the ref / get calls, so a
+	// sentinel would wrap to zero and index the pool out of bounds.
+	if (p_sort_focus_caster.caster_id == UINT32_MAX) {
+		return;
+	}
 
 	// Does the focus caster exist already?
 	for (uint32_t n = 0; n < fi.blobs.size(); n++) {
@@ -482,6 +507,11 @@ void VisualServerBlobShadows::find_best_light(bool p_blobs_or_capsules, FocusCas
 #ifdef GODOT_BLOB_SHADOWS_TEST_DIRECTION_INTERPOLATION
 	test_direction_interpolation();
 #endif
+	// Sentinel caster (no valid pool id) has no lights to find.
+	if (r_focus_caster.caster_id == UINT32_MAX) {
+		return;
+	}
+
 	Caster *caster = nullptr;
 	if (p_blobs_or_capsules) {
 		Blob &blob = data.blobs[r_focus_caster.caster_id];
@@ -678,6 +708,13 @@ void VisualServerBlobShadows::render_set_focus_handle(uint32_t p_focus_handle, c
 		// Cull spheres to camera.
 		for (uint32_t i = 0; i < blobs.blobs.size(); i++) {
 			const FocusCaster &fc = blobs.blobs[i];
+
+			// Sentinel entry (should not happen anymore, see
+			// update_focus_caster) must not be dereferenced.
+			if (fc.caster_id == UINT32_MAX) {
+				continue;
+			}
+
 			const Blob &caster = get_blob(fc.caster_id + 1);
 
 			blobs.blobs_in_camera[i] = caster.aabb_boosted.intersects_convex_shape(data.frustum_planes.ptr(), 6, data.frustum_points.ptr(), 8) ? 255 : 0;
@@ -688,6 +725,11 @@ void VisualServerBlobShadows::render_set_focus_handle(uint32_t p_focus_handle, c
 		// Cull capsules to camera.
 		for (uint32_t i = 0; i < capsules.blobs.size(); i++) {
 			const FocusCaster &fc = capsules.blobs[i];
+
+			if (fc.caster_id == UINT32_MAX) {
+				continue;
+			}
+
 			const Capsule &caster = get_capsule(fc.caster_id + 1);
 
 			capsules.blobs_in_camera[i] = caster.aabb_boosted.intersects_convex_shape(data.frustum_planes.ptr(), 6, data.frustum_points.ptr(), 8) ? 255 : 0;
