@@ -1962,15 +1962,16 @@ void RasterizerSceneGLES3::_render_list(RenderList::Element **p_elements, int p_
 			WRAPPED_GL_ACTIVE_TEXTURE(GL_TEXTURE0 + storage->config.max_texture_image_units - 7);
 			glBindTexture(GL_TEXTURE_2D, p_sky->irradiance);
 			state.scene_shader.set_conditional(SceneShaderGLES3::USE_RADIANCE_MAP, true);
-			state.scene_shader.set_conditional(SceneShaderGLES3::USE_RADIANCE_MAP_ARRAY, storage->config.use_texture_array_environment);
+			// Array vs. plain radiance is no longer a shader conditional: it is settled
+			// for the session by RADIANCE_MAP_ARRAY_AVAILABLE, so only one of the two
+			// samplers is ever declared -- and one fewer conditional halves this axis
+			// of the variant space.
 			use_radiance_map = true;
 		} else {
 			state.scene_shader.set_conditional(SceneShaderGLES3::USE_RADIANCE_MAP, false);
-			state.scene_shader.set_conditional(SceneShaderGLES3::USE_RADIANCE_MAP_ARRAY, false);
 		}
 	} else {
 		state.scene_shader.set_conditional(SceneShaderGLES3::USE_RADIANCE_MAP, false);
-		state.scene_shader.set_conditional(SceneShaderGLES3::USE_RADIANCE_MAP_ARRAY, false);
 	}
 
 	state.cull_front = false;
@@ -5217,6 +5218,17 @@ void RasterizerSceneGLES3::initialize() {
 
 		state.max_skeleton_bones = MIN(2048, max_ubo_size / (12 * sizeof(float)));
 		state.scene_shader.add_custom_define("#define MAX_SKELETON_BONES " + itos(state.max_skeleton_bones) + "\n");
+	}
+
+	// Both of these decide which sampler uniforms the scene shader declares at all.
+	// They are settled once here, before any shader is built, because they are global
+	// for the session -- and every sampler the shader declares is a texture image unit
+	// the material cannot use (texunit:-N resolves to max_image_units - N).
+	if (storage->config.use_texture_array_environment) {
+		state.scene_shader.add_custom_define("#define RADIANCE_MAP_ARRAY_AVAILABLE\n");
+	}
+	if (bool(GLOBAL_GET("rendering/quality/gi_probes/enabled"))) {
+		state.scene_shader.add_custom_define("#define GI_PROBES_AVAILABLE\n");
 	}
 
 	shadow_filter_mode = SHADOW_FILTER_NEAREST;

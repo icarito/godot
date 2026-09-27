@@ -716,7 +716,13 @@ layout(std140) uniform Radiance { // ubo:2
 
 uniform sampler2D irradiance_map; // texunit:-7
 
-#ifdef USE_RADIANCE_MAP_ARRAY //ubershader-skip
+// Which of the two radiance samplers exists is decided once per session by
+// rendering/quality/reflections/texture_array_reflections, not per material, so it
+// is resolved by the preprocessor. Skipping the guard instead (//ubershader-skip)
+// made the ubershader declare BOTH, burning a texture image unit that no draw can
+// ever use. Units are scarce: the engine takes them from the top (texunit:-N maps
+// to max_image_units - N), so every one it holds is one the material cannot have.
+#ifdef RADIANCE_MAP_ARRAY_AVAILABLE
 
 uniform sampler2DArray radiance_map_array; // texunit:-3
 
@@ -743,7 +749,7 @@ vec3 textureDualParaboloidArray(sampler2DArray p_tex, vec3 p_vec, float p_roughn
 	return mix(base, next, float(indexi % 256) / 256.0);
 }
 
-#else //ubershader-skip
+#else
 
 uniform sampler2D radiance_map; // texunit:-2
 
@@ -757,7 +763,7 @@ vec3 textureDualParaboloid(sampler2D p_tex, vec3 p_vec, float p_roughness) {
 	return textureLod(p_tex, norm.xy, p_roughness * RADIANCE_MAX_LOD).xyz;
 }
 
-#endif //ubershader-skip
+#endif // RADIANCE_MAP_ARRAY_AVAILABLE
 
 #endif //ubershader-skip
 
@@ -1654,6 +1660,12 @@ vec4 textureArray_bicubic(sampler2DArray tex, vec3 uv) {
 uniform mediump vec4[12] lightmap_captures;
 #endif //ubershader-skip
 
+// A project with no GIProbe still paid for these two sampler3D units in every
+// ubershader, because //ubershader-skip drops the guard and leaves the declarations
+// unconditional. rendering/quality/gi_probes/enabled lets such a project hand the
+// units back to its materials.
+#ifdef GI_PROBES_AVAILABLE
+
 #ifdef USE_GI_PROBES //ubershader-skip
 
 #if !defined(UBERSHADER_COMPAT)
@@ -1822,6 +1834,8 @@ void gi_probes_compute(vec3 pos, vec3 normal, float roughness, inout vec3 out_sp
 
 #endif //ubershader-skip
 
+#endif // GI_PROBES_AVAILABLE
+
 void main() {
 #ifdef RENDER_DEPTH_DUAL_PARABOLOID //ubershader-runtime
 
@@ -1988,11 +2002,11 @@ FRAGMENT_SHADER_CODE
 		float horizon = min(1.0 + dot(ref_vec, normal), 1.0);
 		ref_vec = normalize((radiance_inverse_xform * vec4(ref_vec, 0.0)).xyz);
 		vec3 radiance;
-#ifdef USE_RADIANCE_MAP_ARRAY //ubershader-runtime
+#ifdef RADIANCE_MAP_ARRAY_AVAILABLE
 		radiance = textureDualParaboloidArray(radiance_map_array, ref_vec, roughness) * bg_energy;
-#else //ubershader-runtime
+#else
 		radiance = textureDualParaboloid(radiance_map, ref_vec, roughness) * bg_energy;
-#endif //ubershader-runtime
+#endif
 		env_reflection_light = radiance;
 		env_reflection_light *= horizon * horizon;
 	}
@@ -2033,10 +2047,12 @@ FRAGMENT_SHADER_CODE
 	specular_blob_intensity *= specular * 2.0;
 #endif
 
+#ifdef GI_PROBES_AVAILABLE
 #ifdef USE_GI_PROBES //ubershader-runtime
 	gi_probes_compute(vertex, normal, roughness, env_reflection_light, ambient_light);
 
 #endif //ubershader-runtime
+#endif // GI_PROBES_AVAILABLE
 
 #ifdef USE_LIGHTMAP //ubershader-runtime
 #ifdef USE_LIGHTMAP_LAYERED //ubershader-runtime

@@ -2699,6 +2699,11 @@ VisualServer::VisualServer() {
 
 	GLOBAL_DEF("rendering/quality/reflections/texture_array_reflections", true);
 	GLOBAL_DEF("rendering/quality/reflections/texture_array_reflections.mobile", false);
+	// The GI probe samplers are declared in every scene ubershader whether the project
+	// has a GIProbe or not, and on a 16-unit mobile GPU those two sampler3D units come
+	// straight out of the material's budget. A project that uses no GIProbe can turn
+	// them off and get the units back.
+	GLOBAL_DEF("rendering/quality/gi_probes/enabled", true);
 	GLOBAL_DEF("rendering/quality/reflections/high_quality_ggx", true);
 	GLOBAL_DEF("rendering/quality/reflections/high_quality_ggx.mobile", false);
 	GLOBAL_DEF("rendering/quality/reflections/irradiance_max_size", 128);
