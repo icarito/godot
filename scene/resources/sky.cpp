@@ -31,6 +31,8 @@
 #include "sky.h"
 
 #include "core/io/image_loader.h"
+#include "core/message_queue.h"
+#include "core/os/thread.h"
 
 void Sky::set_radiance_size(RadianceSize p_size) {
 	ERR_FAIL_INDEX(p_size, RADIANCE_SIZE_MAX);
@@ -101,12 +103,24 @@ void PanoramaSky::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "panorama", PROPERTY_HINT_RESOURCE_TYPE, "Texture"), "set_panorama", "get_panorama");
 }
 
+static void _sky_rid_free_on_main(RID p_rid) {
+	// VisualServer frees are main-thread only. The editor's preview and
+	// resource loader threads can drop the last reference to a sky resource,
+	// so when that happens the RIDs are handed to the main thread through the
+	// (thread-safe) message queue instead of being freed here.
+	if (Thread::get_caller_id() == Thread::get_main_id()) {
+		VS::get_singleton()->free(p_rid);
+	} else {
+		MessageQueue::get_singleton()->push_call(VS::get_singleton()->get_instance_id(), "free_rid", p_rid);
+	}
+}
+
 PanoramaSky::PanoramaSky() {
 	sky = VS::get_singleton()->sky_create();
 }
 
 PanoramaSky::~PanoramaSky() {
-	VS::get_singleton()->free(sky);
+	_sky_rid_free_on_main(sky);
 }
 //////////////////////////////////
 
@@ -358,6 +372,10 @@ RID ProceduralSky::get_rid() const {
 }
 
 void ProceduralSky::_update_sky() {
+	// A deferred _update_sky can race with a loader or preview thread dropping
+	// the last reference to this sky mid-call, so hold a reference ourselves:
+	// the object then dies here, after the update, on the main thread.
+	Ref<Sky> keep_alive(this);
 	bool use_thread = true;
 	if (first_time) {
 		use_thread = false;
@@ -535,6 +553,6 @@ ProceduralSky::~ProceduralSky() {
 	if (sky_thread.is_started()) {
 		sky_thread.wait_to_finish();
 	}
-	VS::get_singleton()->free(sky);
-	VS::get_singleton()->free(texture);
+	_sky_rid_free_on_main(sky);
+	_sky_rid_free_on_main(texture);
 }
