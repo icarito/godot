@@ -82,6 +82,9 @@
 #include "editor/progress_dialog.h"
 #include "editor/project_manager.h"
 #include "editor/script_editor_debugger.h"
+#if !defined(_3D_DISABLED)
+#include "scene/3d/baked_lightmap.h"
+#endif
 #if defined(TOOLS_ENABLED) && !defined(NO_EDITOR_SPLASH)
 #include "main/splash_editor.gen.h"
 #endif
@@ -372,6 +375,9 @@ void Main::print_help(const char *p_binary) {
 	OS::get_singleton()->print("  --doctool [<path>]               Dump the engine API reference to the given <path> (defaults to current dir) in XML format, merging if existing files are found.\n");
 	OS::get_singleton()->print("  --no-docbase                     Disallow dumping the base types (used with --doctool).\n");
 	OS::get_singleton()->print("  --build-solutions                Build the scripting solutions (e.g. for C# projects). Implies --editor and requires a valid project to edit.\n");
+#if !defined(_3D_DISABLED)
+	OS::get_singleton()->print("  --bake-lightmap <scene> [<out>]  Bake every BakedLightmap of <scene> and save it (defaults to the node's light_data path or <scene>.lmbake).\n");
+#endif
 	OS::get_singleton()->print("  --benchmark                      Benchmark the run time and print it to console.\n");
 	OS::get_singleton()->print("  --benchmark-file <path>          Benchmark the run time and save it to a given file in JSON format. The path should be absolute.\n");
 #ifdef DEBUG_METHODS_ENABLED
@@ -1676,6 +1682,105 @@ Error Main::setup2(Thread::ID p_main_tid_override) {
 	return OK;
 }
 
+#if defined(TOOLS_ENABLED) && !defined(_3D_DISABLED)
+static bool _bake_lightmap_progress(float p_completion, const String &p_text, void *p_ud, bool p_refresh) {
+	OS::get_singleton()->print("bake-lightmap: [%3d%%] %s\n", int(p_completion * 100.0), p_text.utf8().get_data());
+	return false; // Never abort.
+}
+
+static void _bake_lightmap_collect(Node *p_node, List<BakedLightmap *> &r_lightmaps) {
+	BakedLightmap *lightmap = Object::cast_to<BakedLightmap>(p_node);
+	if (lightmap) {
+		r_lightmaps.push_back(lightmap);
+	}
+	for (int i = 0; i < p_node->get_child_count(); i++) {
+		_bake_lightmap_collect(p_node->get_child(i), r_lightmaps);
+	}
+}
+
+// Bakes every BakedLightmap of a scene without opening the editor, for the
+// headless tools build (`godot --no-window --bake-lightmap <scene> [<out.lmbake>]`).
+// `BakedLightmap::bake()` reads global transforms, and those are identity
+// outside a tree, so the scene is instanced under a throwaway SceneTree before
+// baking. Returns true on success; the exit code is set so the caller can just
+// `return false` to skip the normal main loop.
+static bool _bake_lightmap_cli(const String &p_scene_path, const String &p_output_path) {
+	Ref<PackedScene> scene = ResourceLoader::load(p_scene_path);
+	if (scene.is_null()) {
+		print_line("bake-lightmap: ERROR: could not load scene '" + p_scene_path + "'.");
+		OS::get_singleton()->set_exit_code(EXIT_FAILURE);
+		return false;
+	}
+
+	Node *root = scene->instance();
+	if (root == nullptr) {
+		print_line("bake-lightmap: ERROR: could not instance scene '" + p_scene_path + "'.");
+		OS::get_singleton()->set_exit_code(EXIT_FAILURE);
+		return false;
+	}
+
+	SceneTree *tree = memnew(SceneTree);
+	tree->init();
+	tree->get_root()->add_child(root);
+
+	List<BakedLightmap *> lightmaps;
+	_bake_lightmap_collect(root, lightmaps);
+
+	if (lightmaps.empty()) {
+		print_line("bake-lightmap: ERROR: '" + p_scene_path + "' has no BakedLightmap node.");
+		tree->get_root()->remove_child(root);
+		memdelete(root);
+		tree->finish();
+		memdelete(tree);
+		OS::get_singleton()->set_exit_code(EXIT_FAILURE);
+		return false;
+	}
+
+	// Same knobs the game's editor_bake_* scripts use for the shipping bakes:
+	// medium quality, denoiser on, per-mesh images (atlas off), LDR, color.
+	BakedLightmap::bake_step_function = _bake_lightmap_progress;
+
+	bool all_ok = true;
+	for (List<BakedLightmap *>::Element *E = lightmaps.front(); E; E = E->next()) {
+		BakedLightmap *lightmap = E->get();
+		String save_path = p_output_path;
+		if (save_path == "") {
+			if (lightmap->get_light_data().is_valid() && lightmap->get_light_data()->get_path().is_resource_file()) {
+				save_path = lightmap->get_light_data()->get_path();
+			} else {
+				save_path = p_scene_path.get_basename() + ".lmbake";
+			}
+		}
+
+		lightmap->set_bake_quality(BakedLightmap::BAKE_QUALITY_MEDIUM);
+		lightmap->set_use_denoiser(true);
+		lightmap->set_generate_atlas(false);
+		lightmap->set_use_hdr(false);
+		lightmap->set_use_color(true);
+		lightmap->set_capture_enabled(false);
+
+		print_line("bake-lightmap: baking '" + String(lightmap->get_path()) + "' -> '" + save_path + "'");
+		BakedLightmap::BakeError err = lightmap->bake(root, save_path);
+		if (err != BakedLightmap::BAKE_ERROR_OK) {
+			print_line("bake-lightmap: ERROR: bake() returned " + itos((int)err) + " for '" + String(lightmap->get_path()) + "'.");
+			all_ok = false;
+		} else {
+			print_line("bake-lightmap: OK '" + save_path + "'");
+		}
+	}
+
+	BakedLightmap::bake_step_function = nullptr;
+
+	tree->get_root()->remove_child(root);
+	memdelete(root);
+	tree->finish();
+	memdelete(tree);
+
+	OS::get_singleton()->set_exit_code(all_ok ? EXIT_SUCCESS : EXIT_FAILURE);
+	return all_ok;
+}
+#endif
+
 // everything the main loop needs to know about frame timings
 static MainTimerSync main_timer_sync;
 
@@ -1695,6 +1800,11 @@ bool Main::start() {
 	String _export_preset;
 	bool export_debug = false;
 	bool export_pack_only = false;
+#if !defined(_3D_DISABLED)
+	bool bake_lightmap = false;
+	String bake_lightmap_scene;
+	String bake_lightmap_output;
+#endif
 #endif
 
 	main_timer_sync.init(OS::get_singleton()->get_ticks_usec());
@@ -1736,6 +1846,15 @@ bool Main::start() {
 				script = args[i + 1];
 			} else if (args[i] == "--test") {
 				test = args[i + 1];
+#if defined(TOOLS_ENABLED) && !defined(_3D_DISABLED)
+			} else if (args[i] == "--bake-lightmap") {
+				bake_lightmap = true;
+				bake_lightmap_scene = args[i + 1];
+				if (i + 2 < args.size() && args[i + 2][0] != '-') {
+					bake_lightmap_output = args[i + 2];
+					i++;
+				}
+#endif
 #ifdef TOOLS_ENABLED
 			} else if (args[i] == "--doctool") {
 				doc_tool_path = args[i + 1];
@@ -1768,6 +1887,14 @@ bool Main::start() {
 			doc_tool_path = ".";
 		}
 	}
+
+#if defined(TOOLS_ENABLED) && !defined(_3D_DISABLED)
+	if (bake_lightmap) {
+		// Run standalone and skip the main loop: the exit code carries the result.
+		_bake_lightmap_cli(bake_lightmap_scene, bake_lightmap_output);
+		return false;
+	}
+#endif
 
 	uint64_t minimum_time_msec = GLOBAL_DEF("application/boot_splash/minimum_display_time", 0);
 	ProjectSettings::get_singleton()->set_custom_property_info("application/boot_splash/minimum_display_time",
