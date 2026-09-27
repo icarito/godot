@@ -71,6 +71,23 @@ uint32_t *ShaderGLES3::compiles_started_this_frame;
 uint32_t *ShaderGLES3::max_frame_compiles_in_progress;
 uint32_t ShaderGLES3::max_simultaneous_compiles;
 uint32_t ShaderGLES3::active_compiles_count;
+bool ShaderGLES3::web_time_budget_enabled = false;
+uint32_t ShaderGLES3::web_time_budget_usec = 0;
+static uint64_t _web_time_budget_used_usec = 0;
+static uint64_t _web_time_budget_frame = UINT64_MAX;
+// Safety net for the budgeted path: the FIFO drain should reach every version,
+// but one the driver never finishes must not keep its objects invisible
+// forever. After this long pending, the version finishes synchronously.
+static const uint64_t WEB_PENDING_DEADLINE_USEC = 60ull * 1000000ull;
+// How many deadline-forced completions the frame may run. The end-of-frame
+// pump walks every pending version: without a cap, a queue that starved past
+// the deadline (slow frames elsewhere) is finished synchronously in ONE frame
+// -- one blocking driver op per version, tens of seconds of frozen page. A
+// couple per frame keeps the guarantee (the FIFO drains the oldest first)
+// with a bounded stall.
+static const uint32_t WEB_DEADLINE_COMPLETIONS_PER_FRAME = 2;
+static uint64_t _web_deadline_completions_frame = UINT64_MAX;
+static uint32_t _web_deadline_completions_count = 0;
 #ifdef DEBUG_ENABLED
 bool ShaderGLES3::log_active_async_compiles_count;
 #endif
@@ -142,7 +159,12 @@ bool ShaderGLES3::_bind(bool p_binding_fallback, bool p_is_ubershader) {
 		DEBUG_TEST_ERROR("Use Program");
 		active = this;
 		return true;
-	} else if (!p_is_ubershader && ubershaders_enabled && !must_be_ready_now && version->async_mode == ASYNC_MODE_VISIBLE && !p_binding_fallback && get_ubershader_flags_uniform() != -1) {
+	} else if (!p_is_ubershader && ubershaders_enabled && !must_be_ready_now && version->async_mode == ASYNC_MODE_VISIBLE && !p_binding_fallback && get_ubershader_flags_uniform() != -1 && !_web_budget_active()) {
+		// Budget mode skips the ubershader: without COMPLETION_STATUS polling
+		// the ubershader build is one atomic glCompileShader/glLinkProgram of
+		// 1-2 s on Firefox, which the budget cannot slice. Draws of pending
+		// versions are simply skipped instead (objects appear staggered), the
+		// same visual the synchronous path always had on this platform.
 		// We can and have to fall back to the ubershader
 		return _bind_ubershader();
 	} else {
@@ -187,14 +209,16 @@ bool ShaderGLES3::_bind_ubershader(bool p_for_warmup) {
 #endif
 	new_conditional_version.version |= VersionKey::UBERSHADER_FLAG;
 #ifdef JAVASCRIPT_ENABLED
-	// WebGL only reaches this fallback with native parallel compilation
-	// (KHR_parallel_shader_compile), because there is no secondary context.
-	// Forcing the ubershader to be ready here builds it synchronously on the
-	// main thread: a mesh whose variant is not cached yet then blocks for as
-	// long as the driver takes (hundreds of ms each, ~15 s across a level's
-	// shaders) and the page reads as hung. Start the build and let this draw be
-	// skipped until it -- or the real variant, whose async compile was already
-	// started above -- is ready. The ubershader is still used once it links.
+	// WebGL reaches this fallback with native parallel compilation
+	// (KHR_parallel_shader_compile) or, without it, through the per-frame
+	// compile budget (see is_async_compilation_supported), because there is no
+	// secondary context. Forcing the ubershader to be ready here builds it
+	// synchronously on the main thread: a mesh whose variant is not cached yet
+	// then blocks for as long as the driver takes (hundreds of ms each, ~15 s
+	// across a level's shaders) and the page reads as hung. Start the build and
+	// let this draw be skipped until it -- or the real variant, whose async
+	// compile was already started above -- is ready. The ubershader is still
+	// used once it links.
 	bool bound = _bind(false, true);
 #else
 	bool bound = _bind(true, true);
@@ -273,6 +297,13 @@ void ShaderGLES3::_log_active_compiles() {
 bool ShaderGLES3::_process_program_state(Version *p_version, bool p_async_forbidden) {
 	bool ready = false;
 	bool run_next_step = true;
+	// Budgeted asynchronous compilation (WebGL without KHR_parallel_shader_compile,
+	// see is_async_compilation_supported): the per-frame budget is the throttle and
+	// the compile-slot limits are bypassed. Without COMPLETION_STATUS polling a
+	// version parked at COMPILING_VERTEX can never observe its vertex shader done
+	// and take its slot back for the fragment pass; with the web default of one
+	// simultaneous compile, two of those would deadlock the queue.
+	const bool web_budget_mode = !p_async_forbidden && _web_budget_active();
 	while (run_next_step) {
 		run_next_step = false;
 		// A non-OK status means the step below may compile, link, wait for the
@@ -298,17 +329,41 @@ bool ShaderGLES3::_process_program_state(Version *p_version, bool p_async_forbid
 			case Version::COMPILE_STATUS_SOURCE_PROVIDED: {
 				uint32_t start_compiles_count = p_async_forbidden ? 2 : 0;
 				if (!start_compiles_count) {
-					uint32_t used_async_slots = MAX(active_compiles_count, *compiles_started_this_frame);
-					uint32_t free_async_slots = used_async_slots < max_simultaneous_compiles ? max_simultaneous_compiles - used_async_slots : 0;
-					start_compiles_count = MIN(2, free_async_slots);
+					if (web_budget_mode) {
+						start_compiles_count = 2;
+					} else {
+						uint32_t used_async_slots = MAX(active_compiles_count, *compiles_started_this_frame);
+						uint32_t free_async_slots = used_async_slots < max_simultaneous_compiles ? max_simultaneous_compiles - used_async_slots : 0;
+						start_compiles_count = MIN(2, free_async_slots);
+					}
+				}
+				if (start_compiles_count >= 1 && web_budget_mode && !_web_time_budget_available() && !_web_pending_over_deadline(p_version)) {
+					// Out of budget for this frame: even one vert compile is a
+					// blocking driver call, so leave the version at
+					// SOURCE_PROVIDED; the next bind attempt retries it.
+					start_compiles_count = 0;
 				}
 				if (start_compiles_count >= 1) {
+					uint64_t op_start = OS::get_singleton()->get_ticks_usec();
 					glCompileShader(p_version->ids.vert);
-					if (start_compiles_count == 1) {
-						p_version->compile_status = Version::COMPILE_STATUS_COMPILING_VERTEX;
-					} else {
+					_web_time_budget_spend(op_start);
+					bool frag_now = start_compiles_count == 2;
+					if (web_budget_mode && frag_now && !_web_time_budget_available()) {
+						// The vertex compile ate the frame budget: leave the
+						// fragment for a later slice instead of stacking a
+						// second blocking call on top of it.
+						frag_now = false;
+						start_compiles_count = 1;
+					}
+					if (frag_now) {
+						op_start = OS::get_singleton()->get_ticks_usec();
 						glCompileShader(p_version->ids.frag);
+						_web_time_budget_spend(op_start);
+					}
+					if (frag_now) {
 						p_version->compile_status = Version::COMPILE_STATUS_COMPILING_VERTEX_AND_FRAGMENT;
+					} else {
+						p_version->compile_status = Version::COMPILE_STATUS_COMPILING_VERTEX;
 					}
 					if (!p_async_forbidden) {
 						versions_compiling.add_last(&p_version->compiling_list);
@@ -324,12 +379,18 @@ bool ShaderGLES3::_process_program_state(Version *p_version, bool p_async_forbid
 			case Version::COMPILE_STATUS_COMPILING_VERTEX: {
 				bool must_compile_frag_now = p_async_forbidden;
 				if (!must_compile_frag_now) {
-					if (active_compiles_count < max_simultaneous_compiles && *compiles_started_this_frame < max_simultaneous_compiles) {
+					if (web_budget_mode) {
+						// Slots are bypassed in budget mode (see web_budget_mode);
+						// only the frame budget gates the next blocking step.
+						must_compile_frag_now = _web_time_budget_available() || _web_pending_over_deadline(p_version);
+					} else if (active_compiles_count < max_simultaneous_compiles && *compiles_started_this_frame < max_simultaneous_compiles) {
 						must_compile_frag_now = true;
 					}
 				}
 				if (must_compile_frag_now) {
+					uint64_t op_start = OS::get_singleton()->get_ticks_usec();
 					glCompileShader(p_version->ids.frag);
+					_web_time_budget_spend(op_start);
 					if (p_version->compiling_list.in_list()) {
 						active_compiles_count++;
 						*max_frame_compiles_in_progress = MAX(*max_frame_compiles_in_progress, active_compiles_count);
@@ -374,9 +435,26 @@ bool ShaderGLES3::_process_program_state(Version *p_version, bool p_async_forbid
 						}
 					}
 				}
+				if (!must_complete_now && web_budget_mode) {
+					// No COMPLETION_STATUS polling exists without KHR: complete
+					// the outstanding shader compile inline (one blocking driver
+					// call) while the frame budget holds, or once the version has
+					// pended for too long.
+					must_complete_now = _web_time_budget_available() || _web_pending_over_deadline(p_version);
+					if (must_complete_now && p_version->compile_status == Version::COMPILE_STATUS_COMPILING_VERTEX_AND_FRAGMENT && p_version->compiling_list.in_list()) {
+						// Mirror the parallel path, which frees the vertex slot
+						// when it observes the vertex shader done: without this
+						// the count never balances at link completion.
+						active_compiles_count--;
+						*max_frame_compiles_in_progress = MAX(*max_frame_compiles_in_progress, active_compiles_count);
+						_log_active_compiles();
+					}
+				}
 				if (must_complete_now) {
+					uint64_t op_start = OS::get_singleton()->get_ticks_usec();
 					bool must_save_to_cache = p_version->version_key.is_subject_to_caching() && p_version->program_binary.source != Version::ProgramBinary::SOURCE_CACHE && shader_cache;
 					bool ok = p_version->shader->_complete_compile(p_version->ids, must_save_to_cache);
+					_web_time_budget_spend(op_start);
 					if (ok) {
 						p_version->compile_status = Version::COMPILE_STATUS_LINKING;
 						run_next_step = p_async_forbidden;
@@ -462,7 +540,13 @@ bool ShaderGLES3::_process_program_state(Version *p_version, bool p_async_forbid
 					glGetProgramiv(p_version->ids.main, _EXT_COMPLETION_STATUS, &link_completed);
 					must_complete_now = link_completed;
 				}
+				if (!must_complete_now && web_budget_mode) {
+					// Same as the compile completion above: without polling, the
+					// link finishes inline under the frame budget (or deadline).
+					must_complete_now = _web_time_budget_available() || _web_pending_over_deadline(p_version);
+				}
 				if (must_complete_now) {
+					uint64_t op_start = OS::get_singleton()->get_ticks_usec();
 					bool must_save_to_cache = p_version->version_key.is_subject_to_caching() && p_version->program_binary.source != Version::ProgramBinary::SOURCE_CACHE && shader_cache;
 					bool ok = false;
 					if (must_save_to_cache && p_version->program_binary.source == Version::ProgramBinary::SOURCE_LOCAL) {
@@ -519,6 +603,7 @@ bool ShaderGLES3::_process_program_state(Version *p_version, bool p_async_forbid
 #endif
 						_log_active_compiles();
 					}
+					_web_time_budget_spend(op_start);
 				}
 			} break;
 		}
@@ -951,6 +1036,9 @@ ShaderGLES3::Version *ShaderGLES3::get_current_version(bool &r_async_forbidden) 
 			_set_source(v.ids, strings_vertex, strings_fragment);
 			v.program_binary.source = Version::ProgramBinary::SOURCE_LOCAL;
 			v.compile_status = Version::COMPILE_STATUS_SOURCE_PROVIDED;
+			// Budget mode reads this to force a version through when it has
+			// pended for too long; unused by the other paths.
+			v.web_pending_since_usec = OS::get_singleton()->get_ticks_usec();
 		}
 	}
 
@@ -1296,7 +1384,71 @@ void ShaderGLES3::init_async_compilation() {
 }
 
 bool ShaderGLES3::is_async_compilation_supported() {
-	return max_simultaneous_compiles > 0 && (compile_queue || parallel_compile_supported);
+	if (max_simultaneous_compiles == 0) {
+		return false;
+	}
+	if (compile_queue || parallel_compile_supported) {
+		return true;
+	}
+#ifdef JAVASCRIPT_ENABLED
+	// WebGL without KHR_parallel_shader_compile (Firefox does not expose it):
+	// there is no COMPLETION_STATUS polling and no secondary context, so the
+	// async state machine below had no way to advance and _bind() fell back to
+	// compiling everything synchronously on the main thread. Measured in
+	// Odisea on Firefox 156: the menu warmup blocked ~48.6 s and the first
+	// level load ~106 s, freezing the page the whole time. With a per-frame
+	// wall-clock budget the same state machine advances one blocking driver
+	// step at a time (glCompileShader / status+link / link status), draws of
+	// pending versions are skipped or fall back to the ubershader, and frames
+	// keep flowing while everything compiles. See _process_program_state.
+	return web_time_budget_enabled && web_time_budget_usec > 0;
+#else
+	return false;
+#endif
+}
+
+bool ShaderGLES3::_web_budget_active() {
+#ifdef JAVASCRIPT_ENABLED
+	return web_time_budget_enabled && web_time_budget_usec > 0 && !parallel_compile_supported && compile_queue == nullptr;
+#else
+	return false;
+#endif
+}
+
+bool ShaderGLES3::_web_time_budget_available() {
+	if (!web_time_budget_enabled || web_time_budget_usec == 0) {
+		return true;
+	}
+	if (_web_time_budget_frame != current_frame) {
+		_web_time_budget_frame = current_frame;
+		_web_time_budget_used_usec = 0;
+	}
+	return _web_time_budget_used_usec < web_time_budget_usec;
+}
+
+void ShaderGLES3::_web_time_budget_spend(uint64_t p_start_usec) {
+	if (!web_time_budget_enabled || web_time_budget_usec == 0) {
+		return;
+	}
+	_web_time_budget_used_usec += OS::get_singleton()->get_ticks_usec() - p_start_usec;
+}
+
+bool ShaderGLES3::_web_pending_over_deadline(Version *p_version) {
+	if (p_version->web_pending_since_usec == 0) {
+		return false;
+	}
+	if (OS::get_singleton()->get_ticks_usec() - p_version->web_pending_since_usec <= WEB_PENDING_DEADLINE_USEC) {
+		return false;
+	}
+	if (_web_deadline_completions_frame != current_frame) {
+		_web_deadline_completions_frame = current_frame;
+		_web_deadline_completions_count = 0;
+	}
+	if (_web_deadline_completions_count >= WEB_DEADLINE_COMPLETIONS_PER_FRAME) {
+		return false;
+	}
+	_web_deadline_completions_count++;
+	return true;
 }
 
 void ShaderGLES3::finish() {
@@ -1348,7 +1500,10 @@ void ShaderGLES3::set_custom_shader_code(uint32_t p_code_id, const String &p_ver
 	cc->async_mode = p_async_mode;
 	cc->version++;
 
-	if (ubershaders_enabled && p_async_mode == ASYNC_MODE_VISIBLE && is_async_compilation_supported() && get_ubershader_flags_uniform() != -1) {
+	if (ubershaders_enabled && p_async_mode == ASYNC_MODE_VISIBLE && is_async_compilation_supported() && get_ubershader_flags_uniform() != -1 && !_web_budget_active()) {
+		// Same as _bind: budget mode does not build ubershaders (one atomic
+		// 1-2 s driver op each on Firefox); the variants compile budgeted and
+		// draws of pending versions are skipped until then.
 		// Warm up the ubershader for this custom code
 		new_conditional_version.code_version = p_code_id;
 		_bind_ubershader(true);

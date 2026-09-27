@@ -138,6 +138,13 @@ public:
 	static uint32_t *max_frame_compiles_in_progress;
 	static uint32_t max_simultaneous_compiles;
 	static uint32_t active_compiles_count;
+	// Budgeted async compilation for WebGL without KHR_parallel_shader_compile:
+	// is_async_compilation_supported() returns true there and every blocking
+	// driver step of _process_program_state() only runs while the current frame
+	// has budget left, so the main thread never freezes on a full synchronous
+	// compile. The budget resets lazily per frame against current_frame.
+	static bool web_time_budget_enabled;
+	static uint32_t web_time_budget_usec;
 #ifdef DEBUG_ENABLED
 	static bool log_active_async_compiles_count;
 #endif
@@ -192,6 +199,10 @@ private:
 		Vector<GLint> texture_uniform_locations;
 		bool uniforms_ready;
 		uint64_t last_frame_processed;
+		// Budget mode: ticks when this version first got its source. A version
+		// pending for too long (budget starved or driver stuck) is forced
+		// through synchronously so its objects never stay invisible forever.
+		uint64_t web_pending_since_usec;
 
 		enum CompileStatus {
 			COMPILE_STATUS_PENDING,
@@ -234,6 +245,7 @@ private:
 				uniform_location(nullptr),
 				uniforms_ready(false),
 				last_frame_processed(UINT64_MAX),
+				web_pending_since_usec(0),
 				compile_status(COMPILE_STATUS_PENDING),
 				queue_rejected(false),
 				compiling_list(this),
@@ -288,6 +300,10 @@ private:
 	bool _complete_link(Version::Ids p_ids, GLenum *r_program_format = nullptr, PoolByteArray *r_program_binary = nullptr) const;
 	// ---
 	static void _log_active_compiles();
+	static bool _web_budget_active();
+	static bool _web_time_budget_available();
+	static void _web_time_budget_spend(uint64_t p_start_usec);
+	static bool _web_pending_over_deadline(Version *p_version);
 	static bool _process_program_state(Version *p_version, bool p_async_forbidden);
 	void _setup_uniforms(CustomCode *p_cc) const;
 	void _dispose_program(Version *p_version);

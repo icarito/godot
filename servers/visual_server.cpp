@@ -2821,6 +2821,12 @@ VisualServer::VisualServer() {
 	ProjectSettings::get_singleton()->set_custom_property_info("rendering/gles3/shaders/max_simultaneous_compiles", PropertyInfo(Variant::INT, "rendering/gles3/shaders/max_simultaneous_compiles", PROPERTY_HINT_RANGE, "1,8,1"));
 	GLOBAL_DEF("rendering/gles3/shaders/max_simultaneous_compiles.mobile", 1);
 	GLOBAL_DEF("rendering/gles3/shaders/max_simultaneous_compiles.web", 1);
+	// Presupuesto de compilacion por frame, solo para WebGL sin
+	// KHR_parallel_shader_compile (se lee bajo JAVASCRIPT_ENABLED en
+	// RasterizerStorageGLES3::initialize). Sin el, Firefox compila sincrono y
+	// congela el hilo principal decenas de segundos. 0 lo apaga. La variable de
+	// entorno ODISEA_COMPILE_BUDGET_MS tiene prioridad.
+	GLOBAL_DEF("rendering/gles3/shaders/web_compile_budget_ms", 25);
 	GLOBAL_DEF("rendering/gles3/shaders/log_active_async_compiles_count", false);
 	GLOBAL_DEF("rendering/gles3/shaders/shader_cache_size_mb", 512);
 	ProjectSettings::get_singleton()->set_custom_property_info("rendering/gles3/shaders/shader_cache_size_mb", PropertyInfo(Variant::INT, "rendering/gles3/shaders/shader_cache_size_mb", PROPERTY_HINT_RANGE, "128,4096,128"));

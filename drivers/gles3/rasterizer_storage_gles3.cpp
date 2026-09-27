@@ -8539,6 +8539,25 @@ void RasterizerStorageGLES3::initialize() {
 	ShaderGLES3::parallel_compile_supported = config.parallel_shader_compile_supported;
 	ShaderGLES3::shader_cache = shaders.cache;
 	ShaderGLES3::cache_write_queue = shaders.cache_write_queue;
+#ifdef JAVASCRIPT_ENABLED
+	// WebGL sin KHR_parallel_shader_compile (Firefox no la expone) no tiene ni
+	// encuesta COMPLETION_STATUS ni contexto secundario: sin presupuesto, el
+	// camino sincrono compila todo de una en el hilo principal y el juego
+	// congela (medido en Odisea: warmup ~48.6 s y carga de nivel ~106 s en
+	// Firefox 156). Con presupuesto por frame el mismo camino async avanza de a
+	// un paso bloqueante de driver por frame y los draws de versiones
+	// pendientes se saltean (o caen al ubershader). 0 ms lo apaga y vuelve al
+	// camino sincrono de siempre.
+	ShaderGLES3::web_time_budget_enabled = true;
+	int web_budget_ms = (int)GLOBAL_GET("rendering/gles3/shaders/web_compile_budget_ms");
+	if (OS::get_singleton()->has_environment("ODISEA_COMPILE_BUDGET_MS")) {
+		web_budget_ms = OS::get_singleton()->get_environment("ODISEA_COMPILE_BUDGET_MS").to_int();
+	}
+	ShaderGLES3::web_time_budget_usec = MAX(0, web_budget_ms) * 1000;
+	if (ShaderGLES3::web_time_budget_usec > 0) {
+		print_line("WebGL shader compile budget: " + itos(ShaderGLES3::web_time_budget_usec / 1000) + " ms/frame");
+	}
+#endif
 
 	shaders.copy.init();
 
