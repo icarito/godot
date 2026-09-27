@@ -3753,6 +3753,23 @@ void RasterizerStorageGLES3::mesh_add_surface(RID p_mesh, uint32_t p_format, VS:
 				glEnableVertexAttribArray(attribs[i].index);
 			}
 
+#ifdef JAVASCRIPT_ENABLED
+			if (!attribs[VS::ARRAY_BONES].enabled) {
+				// The scene ubershader declares and uses `uvec4 bone_indices`
+				// even for meshes without a skeleton: its `#ifdef USE_SKELETON`
+				// carries //ubershader-skip, so the guard line is removed when
+				// the ubershader is built and the attribute is always active.
+				// WebGL 2/ANGLE rejects a draw whose active integer input has no
+				// enabled integer array ("Vertex shader input type does not match
+				// the type of the bound vertex attribute"). Bind location 6 to
+				// the surface's own buffer as a single unsigned int: it always
+				// stays in bounds (vertex stride >= 4) and the skeleton branch is
+				// off for these meshes, so the value is never read.
+				glVertexAttribIPointer(VS::ARRAY_BONES, 1, GL_UNSIGNED_INT, attribs[VS::ARRAY_BONES].stride, CAST_INT_TO_UCHAR_PTR(0));
+				glEnableVertexAttribArray(VS::ARRAY_BONES);
+			}
+#endif
+
 			if (surface->index_id) {
 				glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, surface->index_id);
 			}
@@ -4522,6 +4539,16 @@ void RasterizerStorageGLES3::mesh_render_blend_shapes(Surface *s, const float *p
 			glDisableVertexAttribArray(i);
 		}
 	}
+
+#ifdef JAVASCRIPT_ENABLED
+	if (!(s->format & (1 << VS::ARRAY_BONES))) {
+		// Same as the surface VAO above: the scene ubershader uses uvec4
+		// bone_indices even without a skeleton, and a blend-shape surface
+		// without bones would otherwise draw it from an unbound integer array.
+		glVertexAttribIPointer(VS::ARRAY_BONES, 1, GL_UNSIGNED_INT, stride, CAST_INT_TO_UCHAR_PTR(0));
+		glEnableVertexAttribArray(VS::ARRAY_BONES);
+	}
+#endif
 
 	if (s->index_array_len) {
 		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, s->index_id);
