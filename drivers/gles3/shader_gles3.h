@@ -132,6 +132,7 @@ public:
 	static bool parallel_compile_supported; // True if using natively supported asyncrhonous compilation
 
 	static bool async_hidden_forbidden;
+	static bool ubershaders_enabled;
 	static uint32_t *compiles_started_this_frame;
 	static uint32_t *max_frame_compiles_in_progress;
 	static uint32_t max_simultaneous_compiles;

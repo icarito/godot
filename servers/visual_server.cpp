@@ -2793,6 +2793,7 @@ VisualServer::VisualServer() {
 	// VisualServer.set_shader_async_compilation_enabled(true) cuando ya tiene una
 	// pantalla que cubra el trabajo.
 	GLOBAL_DEF("rendering/gles3/shaders/async_compilation_starts_enabled", true);
+	GLOBAL_DEF("rendering/gles3/shaders/ubershaders_enabled", true);
 	GLOBAL_DEF("rendering/gles3/shaders/shader_compilation_mode", 0);
 	ProjectSettings::get_singleton()->set_custom_property_info("rendering/gles3/shaders/shader_compilation_mode", PropertyInfo(Variant::INT, "rendering/gles3/shaders/shader_compilation_mode", PROPERTY_HINT_ENUM, "Synchronous,Asynchronous,Asynchronous + Cache"));
 	GLOBAL_DEF("rendering/gles3/shaders/shader_compilation_mode.mobile", 0);

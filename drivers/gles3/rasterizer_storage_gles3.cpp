@@ -8250,6 +8250,7 @@ void RasterizerStorageGLES3::initialize() {
 	}
 	config.async_compilation_enabled = compilation_mode >= 1;
 	config.shader_cache_enabled = compilation_mode == 2;
+	ShaderGLES3::ubershaders_enabled = GLOBAL_GET("rendering/gles3/shaders/ubershaders_enabled");
 
 	if (config.async_compilation_enabled) {
 		config.async_compilation_max_simultaneous = MAX(1, (int)ProjectSettings::get_singleton()->get("rendering/gles3/shaders/max_simultaneous_compiles"));

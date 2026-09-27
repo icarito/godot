@@ -65,6 +65,7 @@ ThreadedCallableQueue<GLuint> *ShaderGLES3::compile_queue;
 bool ShaderGLES3::parallel_compile_supported;
 
 bool ShaderGLES3::async_hidden_forbidden;
+bool ShaderGLES3::ubershaders_enabled;
 uint32_t *ShaderGLES3::compiles_started_this_frame;
 uint32_t *ShaderGLES3::max_frame_compiles_in_progress;
 uint32_t ShaderGLES3::max_simultaneous_compiles;
@@ -140,7 +141,7 @@ bool ShaderGLES3::_bind(bool p_binding_fallback) {
 		DEBUG_TEST_ERROR("Use Program");
 		active = this;
 		return true;
-	} else if (!must_be_ready_now && version->async_mode == ASYNC_MODE_VISIBLE && !p_binding_fallback && get_ubershader_flags_uniform() != -1) {
+	} else if (ubershaders_enabled && !must_be_ready_now && version->async_mode == ASYNC_MODE_VISIBLE && !p_binding_fallback && get_ubershader_flags_uniform() != -1) {
 		// We can and have to fall back to the ubershader
 		return _bind_ubershader();
 	} else {
@@ -373,8 +374,15 @@ bool ShaderGLES3::_process_program_state(Version *p_version, bool p_async_forbid
 						}
 					} break;
 					case 1: { // Complete
-						p_version->compile_status = Version::COMPILE_STATUS_BINARY_READY;
-						run_next_step = true;
+						// Applying a program binary can stall mobile GL for hundreds of ms.
+						// Reuse the per-frame compile budget for completed real variants.
+						if (p_async_forbidden || *compiles_started_this_frame < max_simultaneous_compiles) {
+							p_version->compile_status = Version::COMPILE_STATUS_BINARY_READY;
+							run_next_step = true;
+							if (!p_async_forbidden) {
+								(*compiles_started_this_frame)++;
+							}
+						}
 					} break;
 				}
 			} break;
@@ -595,7 +603,7 @@ ShaderGLES3::Version *ShaderGLES3::get_current_version(bool &r_async_forbidden) 
 		strings_common.push_back("\n");
 	}
 
-	if (is_async_compilation_supported() && get_ubershader_flags_uniform() != -1) {
+	if (ubershaders_enabled && is_async_compilation_supported() && get_ubershader_flags_uniform() != -1) {
 		// Indicate that this shader may be used both as ubershader and conditioned during the session
 		strings_common.push_back("#define UBERSHADER_COMPAT\n");
 	}
@@ -1236,7 +1244,7 @@ void ShaderGLES3::setup(const char **p_conditional_defines, int p_conditional_co
 }
 
 void ShaderGLES3::init_async_compilation() {
-	if (is_async_compilation_supported() && get_ubershader_flags_uniform() != -1) {
+	if (ubershaders_enabled && is_async_compilation_supported() && get_ubershader_flags_uniform() != -1) {
 		// Warm up the ubershader for the case of no custom code
 		new_conditional_version.code_version = 0;
 		_bind_ubershader(true);
@@ -1296,7 +1304,7 @@ void ShaderGLES3::set_custom_shader_code(uint32_t p_code_id, const String &p_ver
 	cc->async_mode = p_async_mode;
 	cc->version++;
 
-	if (p_async_mode == ASYNC_MODE_VISIBLE && is_async_compilation_supported() && get_ubershader_flags_uniform() != -1) {
+	if (ubershaders_enabled && p_async_mode == ASYNC_MODE_VISIBLE && is_async_compilation_supported() && get_ubershader_flags_uniform() != -1) {
 		// Warm up the ubershader for this custom code
 		new_conditional_version.code_version = p_code_id;
 		_bind_ubershader(true);
