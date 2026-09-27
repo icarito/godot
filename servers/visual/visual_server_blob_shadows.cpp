@@ -256,6 +256,9 @@ VisualServerBlobShadows::Focus *VisualServerBlobShadows::request_focus(uint32_t 
 }
 
 void VisualServerBlobShadows::delete_focus(uint32_t p_handle) {
+	if (!p_handle) {
+		return;
+	}
 	data.foci.free(--p_handle);
 }
 
@@ -693,7 +696,9 @@ void VisualServerBlobShadows::render_set_focus_handle(uint32_t p_focus_handle, c
 }
 
 uint32_t VisualServerBlobShadows::fill_background_uniforms_blobs(const AABB &p_aabb, float *r_casters, float *r_lights, uint32_t p_max_casters) {
-	DEV_ASSERT(data.render_focus_handle);
+	if (!data.render_focus_handle) {
+		return 0;
+	}
 
 	uint32_t count = 0;
 
@@ -761,7 +766,9 @@ uint32_t VisualServerBlobShadows::fill_background_uniforms_blobs(const AABB &p_a
 }
 
 uint32_t VisualServerBlobShadows::fill_background_uniforms_capsules(const AABB &p_aabb, float *r_casters, float *r_lights, uint32_t p_max_casters) {
-	DEV_ASSERT(data.render_focus_handle);
+	if (!data.render_focus_handle) {
+		return 0;
+	}
 
 	uint32_t count = 0;
 

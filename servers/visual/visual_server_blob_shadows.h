@@ -305,11 +305,17 @@ private:
 	static int qsort_cmp_func(const void *a, const void *b);
 
 	void ref_blob(uint32_t p_handle) {
+		if (!p_handle) {
+			return;
+		}
 		Blob &caster = get_blob(p_handle);
 		caster.ref_count++;
 	}
 
 	void unref_blob(uint32_t p_handle) {
+		if (!p_handle) {
+			return;
+		}
 		Blob &caster = get_blob(p_handle);
 		DEV_ASSERT(caster.ref_count);
 		caster.ref_count--;
@@ -321,11 +327,17 @@ private:
 	}
 
 	void ref_capsule(uint32_t p_handle) {
+		if (!p_handle) {
+			return;
+		}
 		Capsule &caster = get_capsule(p_handle);
 		caster.ref_count++;
 	}
 
 	void unref_capsule(uint32_t p_handle) {
+		if (!p_handle) {
+			return;
+		}
 		Capsule &caster = get_capsule(p_handle);
 		DEV_ASSERT(caster.ref_count);
 		caster.ref_count--;

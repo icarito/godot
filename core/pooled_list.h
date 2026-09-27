@@ -179,6 +179,7 @@ public:
 	}
 
 	void free(const U &p_id) {
+		ERR_FAIL_UNSIGNED_INDEX(p_id, _active_map.size());
 		_pool.free(p_id);
 
 		// remove from the active list.

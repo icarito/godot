@@ -4703,8 +4703,10 @@ bool VisualServerScene::free(RID p_rid) {
 	if (camera_owner.owns(p_rid)) {
 		Camera *camera = camera_owner.get(p_rid);
 
-		_blob_shadows.delete_focus(camera->blob_focus_handle);
-		camera->blob_focus_handle = 0;
+		if (camera->blob_focus_handle) {
+			_blob_shadows.delete_focus(camera->blob_focus_handle);
+			camera->blob_focus_handle = 0;
+		}
 
 		camera_owner.free(p_rid);
 		memdelete(camera);
