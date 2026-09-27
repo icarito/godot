@@ -2239,11 +2239,90 @@ void RasterizerSceneGLES3::_render_list(RenderList::Element **p_elements, int p_
 			storage->info.render.surface_switch_count++;
 		}
 
+		// La instrumentacion es opt-in: sin FRT_SKIN_DIAGNOSTICS no hace ni un
+		// glGet ni imprime, asi que los builds de release no la pagan.
+		static const bool frt_skin_diag = OS::get_singleton()->has_environment("FRT_SKIN_DIAGNOSTICS");
+		static int skin_attr_reports = 0;
+		const bool probe_skin_program = frt_skin_diag && skeleton && skin_attr_reports < 12;
+		if (probe_skin_program) {
+			skin_attr_reports++;
+			GLint vao = 0, fbo = 0;
+			glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &vao);
+			glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &fbo);
+			const int skin_attributes[] = { VS::ARRAY_BONES, VS::ARRAY_WEIGHTS };
+			for (int attribute : skin_attributes) {
+				GLint enabled = 0, size = 0, type = 0, stride = 0, normalized = 0, integer = 0, buffer = 0;
+				void *offset = nullptr;
+				glGetVertexAttribiv(attribute, GL_VERTEX_ATTRIB_ARRAY_ENABLED, &enabled);
+				glGetVertexAttribiv(attribute, GL_VERTEX_ATTRIB_ARRAY_SIZE, &size);
+				glGetVertexAttribiv(attribute, GL_VERTEX_ATTRIB_ARRAY_TYPE, &type);
+				glGetVertexAttribiv(attribute, GL_VERTEX_ATTRIB_ARRAY_STRIDE, &stride);
+				glGetVertexAttribiv(attribute, GL_VERTEX_ATTRIB_ARRAY_NORMALIZED, &normalized);
+				glGetVertexAttribiv(attribute, GL_VERTEX_ATTRIB_ARRAY_INTEGER, &integer);
+				glGetVertexAttribiv(attribute, GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING, &buffer);
+				glGetVertexAttribPointerv(attribute, GL_VERTEX_ATTRIB_ARRAY_POINTER, &offset);
+				print_line("SKINATTR vao=" + itos(vao) + " attr=" + itos(attribute) + " enabled=" + itos(enabled) + " size=" + itos(size) + " type=" + itos(type) + " stride=" + itos(stride) + " normalized=" + itos(normalized) + " integer=" + itos(integer) + " buffer=" + itos(buffer) + " offset=" + itos((uint64_t)offset));
+			}
+			GLint depth_bits = 0, vp[4] = { 0, 0, 0, 0 };
+			glGetIntegerv(GL_DEPTH_BITS, &depth_bits);
+			glGetIntegerv(GL_VIEWPORT, vp);
+			GLenum fb_status = glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER);
+			GLint dep_type = 0, dep_name = 0, dep_bits2 = 0;
+			glGetFramebufferAttachmentParameteriv(GL_DRAW_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE, &dep_type);
+			glGetFramebufferAttachmentParameteriv(GL_DRAW_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME, &dep_name);
+			glGetFramebufferAttachmentParameteriv(GL_DRAW_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_FRAMEBUFFER_ATTACHMENT_DEPTH_SIZE, &dep_bits2);
+			RasterizerStorageGLES3::RenderTarget *rt = storage->frame.current_rt;
+			String rtdesc = "rt=none";
+			if (rt) {
+				rtdesc = "rt buffers.fbo=" + itos(rt->buffers.fbo) + " active=" + itos(rt->buffers.active) +
+						" buffers.depth=" + itos(rt->buffers.depth) +
+						" front.fbo=" + itos(rt->fbo) + " depth=" + itos(rt->depth);
+			}
+			print_line("SKINATTR #" + itos(skin_attr_reports) + " depth_bits=" + itos(depth_bits) +
+					" fbo=" + itos(fbo) + " vp=" + itos(vp[0]) + "," + itos(vp[1]) + "," + itos(vp[2]) + "," + itos(vp[3]) +
+					" " + rtdesc + " used_depth_prepass=" + itos(state.used_depth_prepass) + " p_shadow=" + itos(p_shadow) +
+					" fbstatus=" + itos(fb_status) + " dep(" + itos(dep_type) + "," + itos(dep_name) + "," + itos(dep_bits2) + ")");
+		}
+
 		_set_cull(e->sort_key & RenderList::SORT_KEY_MIRROR_FLAG, e->sort_key & RenderList::SORT_KEY_CULL_DISABLED_FLAG, p_reverse_cull);
 
 		state.scene_shader.set_uniform(SceneShaderGLES3::WORLD_TRANSFORM, e->instance->transform);
 
+		const bool force_skin_no_depth = skeleton && !p_shadow && OS::get_singleton()->has_environment("FRT_SKIN_NO_DEPTH");
+		if (force_skin_no_depth) {
+			glDisable(GL_DEPTH_TEST);
+		}
 		_render_geometry(e);
+		if (force_skin_no_depth) {
+			glEnable(GL_DEPTH_TEST);
+		}
+
+		if (probe_skin_program) {
+			// El programa se consulta a GL despues del draw: antes de que el shader haga
+			// bind, GL_CURRENT_PROGRAM todavia apunta al programa anterior, y el motor
+			// borra programas sin desligarlos, asi que ese id puede estar liberado (Mesa
+			// revienta al consultar sus uniforms: glGetActiveUniform devuelve basura).
+			GLint prog = 0;
+			glGetIntegerv(GL_CURRENT_PROGRAM, &prog);
+			GLint nunits = 0;
+			glGetProgramiv(prog, GL_ACTIVE_UNIFORMS, &nunits);
+			String samplers;
+			if (prog != 0 && glIsProgram(prog) && nunits > 0 && nunits < 4096) {
+				for (int u = 0; u < nunits; u++) {
+					char name[128];
+					GLsizei len = 0;
+					GLint size = 0;
+					GLenum type = 0;
+					glGetActiveUniform(prog, u, sizeof(name), &len, &size, &type, name);
+					if (type == GL_SAMPLER_2D || type == GL_SAMPLER_CUBE || type == GL_SAMPLER_2D_SHADOW || type == GL_INT_SAMPLER_2D) {
+						GLint val = -1;
+						glGetUniformiv(prog, u, &val);
+						samplers += String("  ") + String(name) + "=" + itos(val);
+					}
+				}
+			}
+			print_line("SKINATTR prog=" + itos(prog) + " nunits=" + itos(nunits) + " samplers=" + samplers);
+		}
 
 		prev_material = material;
 		prev_base_type = e->instance->base_type;
@@ -4512,6 +4591,9 @@ void RasterizerSceneGLES3::render_scene(const Transform &p_cam_transform, const 
 	// Never do depth prepass if effects are disabled or if we render overdraws
 	use_depth_prepass = use_depth_prepass && storage->frame.current_rt && !storage->frame.current_rt->flags[RasterizerStorage::RENDER_TARGET_NO_3D_EFFECTS];
 	use_depth_prepass = use_depth_prepass && state.debug_draw != VS::VIEWPORT_DEBUG_DRAW_OVERDRAW;
+	if (OS::get_singleton()->has_environment("FRT_NO_DEPTH_PREPASS")) {
+		use_depth_prepass = false;
+	}
 
 	if (use_depth_prepass) {
 		//pre z pass
