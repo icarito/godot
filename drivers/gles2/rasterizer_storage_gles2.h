@@ -550,6 +550,7 @@ public:
 	virtual void shader_remove_custom_define(RID p_shader, const String &p_define);
 
 	void set_shader_async_hidden_forbidden(bool p_forbidden) {}
+	void set_shader_async_compilation_enabled(bool p_enabled) {}
 	bool is_shader_async_hidden_forbidden() { return false; }
 
 	void _update_shader(Shader *p_shader) const;

@@ -119,6 +119,7 @@ public:
 		bool program_binary_supported;
 		bool parallel_shader_compile_supported;
 		bool async_compilation_enabled;
+		int async_compilation_max_simultaneous = 1;
 		bool shader_cache_enabled;
 	} config;
 
@@ -564,6 +565,7 @@ public:
 	virtual void shader_remove_custom_define(RID p_shader, const String &p_define);
 
 	virtual void set_shader_async_hidden_forbidden(bool p_forbidden);
+	virtual void set_shader_async_compilation_enabled(bool p_enabled);
 	virtual bool is_shader_async_hidden_forbidden();
 
 	void _update_shader(Shader *p_shader) const;

@@ -275,6 +275,7 @@ public:
 	virtual void shader_remove_custom_define(RID p_shader, const String &p_define) = 0;
 
 	virtual void set_shader_async_hidden_forbidden(bool p_forbidden) = 0;
+	virtual void set_shader_async_compilation_enabled(bool p_enabled) = 0;
 	virtual bool is_shader_async_hidden_forbidden() = 0;
 
 	/* COMMON MATERIAL API */

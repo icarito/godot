@@ -207,6 +207,7 @@ public:
 	BIND2(shader_remove_custom_define, RID, const String &)
 
 	BIND1(set_shader_async_hidden_forbidden, bool)
+	BIND1(set_shader_async_compilation_enabled, bool)
 
 	/* COMMON MATERIAL API */
 

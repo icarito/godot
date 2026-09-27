@@ -1908,6 +1908,7 @@ void VisualServer::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("shader_set_default_texture_param", "shader", "name", "texture"), &VisualServer::shader_set_default_texture_param);
 	ClassDB::bind_method(D_METHOD("shader_get_default_texture_param", "shader", "name"), &VisualServer::shader_get_default_texture_param);
 	ClassDB::bind_method(D_METHOD("set_shader_async_hidden_forbidden", "forbidden"), &VisualServer::set_shader_async_hidden_forbidden);
+	ClassDB::bind_method(D_METHOD("set_shader_async_compilation_enabled", "enabled"), &VisualServer::set_shader_async_compilation_enabled);
 
 	ClassDB::bind_method(D_METHOD("material_create"), &VisualServer::material_create);
 	ClassDB::bind_method(D_METHOD("material_set_shader", "shader_material", "shader"), &VisualServer::material_set_shader);
@@ -2787,6 +2788,11 @@ VisualServer::VisualServer() {
 		force_shader_fallbacks = GLOBAL_GET("rendering/gles3/shaders/debug_shader_fallbacks");
 	}
 #endif
+	// Con esto en false el async queda armado pero dormido: el cache y la cola de
+	// compilacion existen, y el juego lo enciende con
+	// VisualServer.set_shader_async_compilation_enabled(true) cuando ya tiene una
+	// pantalla que cubra el trabajo.
+	GLOBAL_DEF("rendering/gles3/shaders/async_compilation_starts_enabled", true);
 	GLOBAL_DEF("rendering/gles3/shaders/shader_compilation_mode", 0);
 	ProjectSettings::get_singleton()->set_custom_property_info("rendering/gles3/shaders/shader_compilation_mode", PropertyInfo(Variant::INT, "rendering/gles3/shaders/shader_compilation_mode", PROPERTY_HINT_ENUM, "Synchronous,Asynchronous,Asynchronous + Cache"));
 	GLOBAL_DEF("rendering/gles3/shaders/shader_compilation_mode.mobile", 0);

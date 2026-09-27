@@ -133,6 +133,7 @@ public:
 	FUNC2(shader_remove_custom_define, RID, const String &)
 
 	FUNC1(set_shader_async_hidden_forbidden, bool)
+	FUNC1(set_shader_async_compilation_enabled, bool)
 
 	/* COMMON MATERIAL API */
 

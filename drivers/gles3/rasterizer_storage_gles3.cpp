@@ -2540,6 +2540,26 @@ void RasterizerStorageGLES3::shader_remove_custom_define(RID p_shader, const Str
 	_shader_make_dirty(shader);
 }
 
+// Apagar el async es poner max_simultaneous_compiles en cero: eso es lo unico que
+// mira is_async_compilation_supported(), y deja el cache de disco intacto (ese
+// depende de shader_cache, no de esto). Sirve para no pagar ubershaders en pantallas
+// donde no hay nada que cubrir -- el ubershader solo rinde si hay algo detras que
+// mostrar mientras compila la variante real.
+void RasterizerStorageGLES3::set_shader_async_compilation_enabled(bool p_enabled) {
+	// En modo sincrono no hay cola async que encender: async_compilation_max_simultaneous
+	// sale de initialize() SOLO cuando el modo es >= 1, asi que encenderla desde el juego
+	// leia un entero sin inicializar. En nativo salia 0 y no se notaba; en el heap de wasm
+	// salia basura y la cola de compilacion indexaba fuera de rango.
+	if (!config.async_compilation_enabled) {
+		return;
+	}
+	if (p_enabled) {
+		ShaderGLES3::max_simultaneous_compiles = config.async_compilation_max_simultaneous;
+	} else {
+		ShaderGLES3::max_simultaneous_compiles = 0;
+	}
+}
+
 void RasterizerStorageGLES3::set_shader_async_hidden_forbidden(bool p_forbidden) {
 	ShaderGLES3::async_hidden_forbidden = p_forbidden;
 }
@@ -8232,7 +8252,13 @@ void RasterizerStorageGLES3::initialize() {
 	config.shader_cache_enabled = compilation_mode == 2;
 
 	if (config.async_compilation_enabled) {
-		ShaderGLES3::max_simultaneous_compiles = MAX(1, (int)ProjectSettings::get_singleton()->get("rendering/gles3/shaders/max_simultaneous_compiles"));
+		config.async_compilation_max_simultaneous = MAX(1, (int)ProjectSettings::get_singleton()->get("rendering/gles3/shaders/max_simultaneous_compiles"));
+		ShaderGLES3::max_simultaneous_compiles = config.async_compilation_max_simultaneous;
+		// El proyecto puede pedir que arranque apagado y encenderlo cuando tenga una
+		// pantalla que valga la pena cubrir (ver set_shader_async_compilation_enabled).
+		if (!(bool)GLOBAL_GET("rendering/gles3/shaders/async_compilation_starts_enabled")) {
+			ShaderGLES3::max_simultaneous_compiles = 0;
+		}
 #ifdef GLES_OVER_GL
 		if (GLAD_GL_ARB_parallel_shader_compile) {
 			glMaxShaderCompilerThreadsARB(ShaderGLES3::max_simultaneous_compiles);
