@@ -5678,6 +5678,24 @@ void RasterizerSceneGLES3::initialize() {
 
 		state.scene_shader.add_custom_define("#define MAX_DECALS " + itos(state.max_decals) + "\n");
 
+		// Keep every light/reflection/decal block bound to its (zeroed) buffer
+		// from the start. The scene ubershader is built by deleting the
+		// //ubershader-skip guard lines, not the blocks, so it statically uses
+		// DirectionalLightData, OmniLightData, SpotLightData, ReflectionProbeData
+		// and DecalDataBlock whether or not the frame has a directional light,
+		// omni/spot lights, probes or decals. The _setup_* functions only bind
+		// the blocks they have data for, so a fallback draw referencing an
+		// unbound block is GL_INVALID_OPERATION on WebGL 2 and gets dropped --
+		// and the error flood is what stalled the shader warmup. They rebind
+		// these with real data when there is any; binding them here only fills
+		// the gaps.
+		glBindBufferBase(GL_UNIFORM_BUFFER, 2, state.env_radiance_ubo);
+		glBindBufferBase(GL_UNIFORM_BUFFER, 3, state.directional_ubo);
+		glBindBufferBase(GL_UNIFORM_BUFFER, 4, state.omni_array_ubo);
+		glBindBufferBase(GL_UNIFORM_BUFFER, 5, state.spot_array_ubo);
+		glBindBufferBase(GL_UNIFORM_BUFFER, 6, state.reflection_array_ubo);
+		glBindBufferBase(GL_UNIFORM_BUFFER, 7, state.decal_array_ubo);
+
 		decal_atlas_tex = 0;
 		decal_atlas_size = Size2i(256, 256);
 		decal_atlas_dirty = false;
