@@ -395,6 +395,9 @@ void EditorSettings::_load_defaults(Ref<ConfigFile> p_extra_config) {
 	// On save
 	_initial_set("filesystem/on_save/compress_binary_resources", true);
 	_initial_set("filesystem/on_save/safe_save_on_backup_then_rename", true);
+	// Refuse to overwrite a resource or scene whose file changed on disk after it
+	// was loaded (e.g. an external tool/agent edited it while the editor was open).
+	_initial_set("filesystem/on_save/abort_if_modified_externally", true);
 
 	// File dialog
 	_initial_set("filesystem/file_dialog/show_hidden_files", false);

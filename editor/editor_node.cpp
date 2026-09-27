@@ -917,7 +917,11 @@ void EditorNode::_scan_external_changes() {
 }
 
 void EditorNode::_resave_scenes(String p_str) {
+	// The user picked "Save" in the "disk changed" dialog: an explicit overwrite of
+	// the files whose change on disk was just reported, so bypass the guard.
+	_force_overwrite_external_changes = true;
 	save_all_scenes();
+	_force_overwrite_external_changes = false;
 	ProjectSettings::get_singleton()->save();
 	disk_changed->hide();
 }
@@ -1024,6 +1028,29 @@ void EditorNode::edit_node(Node *p_node) {
 	push_item(p_node);
 }
 
+bool EditorNode::_block_save_if_changed_on_disk(const String &p_path, uint64_t p_loaded_modified_time) {
+	// Saving is an explicit user action for the file we are editing; the guard only
+	// exists so that a *different* writer (an external editor, a script, an agent)
+	// is not silently overwritten. The "disk changed" dialog's overwrite option and
+	// the opt-out setting both bypass it.
+	if (_force_overwrite_external_changes) {
+		return false;
+	}
+	if (!EditorSettings::get_singleton()->get("filesystem/on_save/abort_if_modified_externally")) {
+		return false;
+	}
+	// No baseline recorded (a new file, or something never loaded/saved through the
+	// editor) means there is nothing to compare against, so never block.
+	if (p_loaded_modified_time == 0 || !FileAccess::exists(p_path)) {
+		return false;
+	}
+	if (FileAccess::get_modified_time(p_path) > p_loaded_modified_time) {
+		show_accept(vformat(TTR("Can't save '%s': the file changed on disk after it was loaded. Reload it before saving, or the editor would overwrite the external changes (disable 'filesystem/on_save/abort_if_modified_externally' to force it)."), p_path), TTR("OK"));
+		return true;
+	}
+	return false;
+}
+
 void EditorNode::save_resource_in_path(const Ref<Resource> &p_resource, const String &p_path) {
 	editor_data.apply_changes_in_editors();
 	int flg = 0;
@@ -1032,6 +1059,13 @@ void EditorNode::save_resource_in_path(const Ref<Resource> &p_resource, const St
 	}
 
 	String path = ProjectSettings::get_singleton()->localize_path(p_path);
+
+	// Only guard the file this resource was loaded from: saving it to a different
+	// path ("Save As") is an explicit overwrite of that other file.
+	if (path == p_resource->get_path() && _block_save_if_changed_on_disk(path, p_resource->get_last_modified_time())) {
+		return;
+	}
+
 	Error err = ResourceSaver::save(path, p_resource, flg | ResourceSaver::FLAG_REPLACE_SUBRESOURCE_PATHS);
 
 	if (err != OK) {
@@ -1535,6 +1569,16 @@ void EditorNode::_save_scene(String p_file, int idx) {
 	if (scene->get_filename() != String() && _validate_scene_recursive(scene->get_filename(), scene)) {
 		show_accept(TTR("This scene can't be saved because there is a cyclic instancing inclusion.\nPlease resolve it and then attempt to save again."), TTR("OK"));
 		return;
+	}
+
+	// Overwriting a scene another tool changed on disk while it was open would
+	// discard those external changes. "Save As" (p_file != scene->get_filename())
+	// and the "disk changed" dialog's overwrite both bypass this.
+	if (ProjectSettings::get_singleton()->localize_path(p_file) == scene->get_filename()) {
+		int scene_idx = idx < 0 ? editor_data.get_edited_scene() : idx;
+		if (_block_save_if_changed_on_disk(p_file, editor_data.get_scene_modified_time(scene_idx))) {
+			return;
+		}
 	}
 
 	editor_data.apply_changes_in_editors();
@@ -5984,6 +6028,7 @@ EditorNode::EditorNode() {
 	docks_visible = true;
 	restoring_scenes = false;
 	cmdline_export_mode = false;
+	_force_overwrite_external_changes = false;
 	scene_distraction = false;
 	script_distraction = false;
 

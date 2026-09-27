@@ -584,6 +584,9 @@ private:
 	} export_defer;
 
 	bool cmdline_export_mode;
+	// Set while the user explicitly chose to overwrite externally modified files
+	// from the "disk changed" dialog, to bypass the on-save external-change guard.
+	bool _force_overwrite_external_changes;
 
 	static EditorNode *singleton;
 
@@ -661,6 +664,7 @@ private:
 
 	void _resources_changed(const PoolVector<String> &p_resources);
 	void _scan_external_changes();
+	bool _block_save_if_changed_on_disk(const String &p_path, uint64_t p_loaded_modified_time);
 	void _reload_modified_scenes();
 	void _reload_project_settings();
 	void _resave_scenes(String p_str);
