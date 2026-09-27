@@ -30,7 +30,10 @@
 
 #import "joypad_iphone.h"
 
+#import <CoreHaptics/CoreHaptics.h>
+
 #include "core/project_settings.h"
+#include "main/input_default.h"
 #include "drivers/coreaudio/audio_driver_coreaudio.h"
 #import "godot_view.h"
 #include "main/main.h"
@@ -54,12 +57,22 @@ void JoypadIPhone::start_processing() {
 	}
 }
 
+void JoypadIPhone::process_vibration() {
+	if (observer) {
+		[observer processVibration];
+	}
+}
+
 @interface JoypadIPhoneObserver ()
 
 @property(assign, nonatomic) BOOL isObserving;
 @property(assign, nonatomic) BOOL isProcessing;
 @property(strong, nonatomic) NSMutableDictionary *connectedJoypads;
 @property(strong, nonatomic) NSMutableArray *joypadsQueue;
+// joy id -> CHHapticEngine / CHHapticPatternPlayer / last applied Input vibration timestamp.
+@property(strong, nonatomic) NSMutableDictionary *hapticEngines;
+@property(strong, nonatomic) NSMutableDictionary *hapticPlayers;
+@property(strong, nonatomic) NSMutableDictionary *vibrationTimestamps;
 
 @end
 
@@ -99,6 +112,9 @@ void JoypadIPhone::start_processing() {
 
 	self.connectedJoypads = [NSMutableDictionary dictionary];
 	self.joypadsQueue = [NSMutableArray array];
+	self.hapticEngines = [NSMutableDictionary dictionary];
+	self.hapticPlayers = [NSMutableDictionary dictionary];
+	self.vibrationTimestamps = [NSMutableDictionary dictionary];
 
 	// get told when controllers connect, this will be called right away for
 	// already connected controllers
@@ -124,8 +140,16 @@ void JoypadIPhone::start_processing() {
 	self.isObserving = NO;
 	self.isProcessing = NO;
 
+	for (NSNumber *key in [self.hapticEngines allKeys]) {
+		[self stopHapticsForJoyId:key];
+		[(CHHapticEngine *)[self.hapticEngines objectForKey:key] stopWithCompletionHandler:nil];
+	}
+
 	self.connectedJoypads = nil;
 	self.joypadsQueue = nil;
+	self.hapticEngines = nil;
+	self.hapticPlayers = nil;
+	self.vibrationTimestamps = nil;
 }
 
 - (void)dealloc {
@@ -199,10 +223,114 @@ void JoypadIPhone::start_processing() {
 		int joy_id = [key intValue];
 		OSIPhone::get_singleton()->joy_connection_changed(joy_id, false, "");
 
+		[self stopHapticsForJoyId:key];
+		[(CHHapticEngine *)[self.hapticEngines objectForKey:key] stopWithCompletionHandler:nil];
+		[self.hapticEngines removeObjectForKey:key];
+		[self.vibrationTimestamps removeObjectForKey:key];
+
 		// and remove it from our dictionary
 		[self.connectedJoypads removeObjectForKey:key];
 	};
 };
+
+// Rumble through GCController.haptics (iOS 14+, the template targets 15): one continuous
+// Core Haptics event per start_joy_vibration(), replaced by the next one and stopped when its
+// magnitudes are zero. Godot's two motors map to intensity (the stronger of the two) and
+// sharpness (how much of it is the weak, high-frequency motor), which is how Core Haptics
+// describes a rumble on controllers that expose a single "default" locality.
+- (void)processVibration {
+	InputDefault *input = (InputDefault *)Input::get_singleton();
+	if (!input || !self.connectedJoypads) {
+		return;
+	}
+
+	for (NSNumber *key in [self.connectedJoypads allKeys]) {
+		int joy_id = [key intValue];
+		uint64_t timestamp = input->get_joy_vibration_timestamp(joy_id);
+		uint64_t applied = [[self.vibrationTimestamps objectForKey:key] unsignedLongLongValue];
+		if (timestamp <= applied) {
+			continue;
+		}
+		[self.vibrationTimestamps setObject:[NSNumber numberWithUnsignedLongLong:timestamp] forKey:key];
+
+		Vector2 strength = input->get_joy_vibration_strength(joy_id);
+		float duration = input->get_joy_vibration_duration(joy_id);
+		GCController *controller = [self.connectedJoypads objectForKey:key];
+		if (strength.x <= 0.0 && strength.y <= 0.0) {
+			[self stopHapticsForJoyId:key];
+		} else {
+			[self startHapticsForController:controller joyId:key weak:strength.x strong:strength.y duration:duration];
+		}
+	}
+}
+
+- (CHHapticEngine *)hapticEngineForController:(GCController *)controller joyId:(NSNumber *)key {
+	CHHapticEngine *engine = [self.hapticEngines objectForKey:key];
+	if (engine) {
+		return engine;
+	}
+	if (controller.haptics == nil) {
+		return nil;
+	}
+	engine = [controller.haptics createEngineWithLocality:GCHapticsLocalityDefault];
+	if (engine == nil) {
+		return nil;
+	}
+	engine.autoShutdownEnabled = YES;
+	// The engine stops when the app goes to the background; the next rumble restarts it.
+	_weakify(engine);
+	engine.resetHandler = ^{
+		_strongify(engine);
+		[engine startAndReturnError:nil];
+	};
+	[self.hapticEngines setObject:engine forKey:key];
+	return engine;
+}
+
+- (void)startHapticsForController:(GCController *)controller joyId:(NSNumber *)key weak:(float)weak strong:(float)strong duration:(float)duration {
+	CHHapticEngine *engine = [self hapticEngineForController:controller joyId:key];
+	if (engine == nil) {
+		return;
+	}
+
+	NSError *error = nil;
+	if (![engine startAndReturnError:&error]) {
+		return;
+	}
+
+	float intensity = MAX(weak, strong);
+	float sharpness = weak / MAX(weak + strong, 0.0001f);
+	// Godot's duration 0 means "until stop_joy_vibration()": hold for a long time instead.
+	NSTimeInterval seconds = duration > 0.0 ? duration : 60.0;
+
+	CHHapticEventParameter *intensity_param = [[CHHapticEventParameter alloc] initWithParameterID:CHHapticEventParameterIDHapticIntensity value:intensity];
+	CHHapticEventParameter *sharpness_param = [[CHHapticEventParameter alloc] initWithParameterID:CHHapticEventParameterIDHapticSharpness value:sharpness];
+	CHHapticEvent *event = [[CHHapticEvent alloc] initWithEventType:CHHapticEventTypeHapticContinuous
+														 parameters:@[ intensity_param, sharpness_param ]
+													   relativeTime:0
+														   duration:seconds];
+	CHHapticPattern *pattern = [[CHHapticPattern alloc] initWithEvents:@[ event ] parameters:@[] error:&error];
+	if (pattern == nil) {
+		return;
+	}
+	id<CHHapticPatternPlayer> player = [engine createPlayerWithPattern:pattern error:&error];
+	if (player == nil) {
+		return;
+	}
+
+	[self stopHapticsForJoyId:key];
+	if ([player startAtTime:CHHapticTimeImmediate error:&error]) {
+		[self.hapticPlayers setObject:player forKey:key];
+	}
+}
+
+- (void)stopHapticsForJoyId:(NSNumber *)key {
+	id<CHHapticPatternPlayer> player = [self.hapticPlayers objectForKey:key];
+	if (player) {
+		[player stopAtTime:CHHapticTimeImmediate error:nil];
+		[self.hapticPlayers removeObjectForKey:key];
+	}
+}
 
 - (GCControllerPlayerIndex)getFreePlayerIndex {
 	bool have_player_1 = false;

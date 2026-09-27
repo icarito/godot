@@ -260,6 +260,10 @@ bool OSIPhone::iterate() {
 
 	input->flush_buffered_events();
 
+	if (joypad_iphone) {
+		joypad_iphone->process_vibration();
+	}
+
 	return Main::iteration();
 };
 

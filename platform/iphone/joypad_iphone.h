@@ -35,6 +35,7 @@
 - (void)startObserving;
 - (void)startProcessing;
 - (void)finishObserving;
+- (void)processVibration;
 
 @end
 
@@ -47,4 +48,6 @@ public:
 	~JoypadIPhone();
 
 	void start_processing();
+	// Applies Input.start_joy_vibration() / stop_joy_vibration() to each controller's haptics.
+	void process_vibration();
 };
