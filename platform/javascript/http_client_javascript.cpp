@@ -216,7 +216,14 @@ PoolByteArray HTTPClient::read_response_body_chunk() {
 }
 
 void HTTPClient::set_blocking_mode(bool p_enable) {
-	ERR_FAIL_COND_MSG(p_enable, "HTTPClient blocking mode is not supported for the HTML5 platform.");
+	// HTTPRequest::request() calls this with true on every platform, right before
+	// it starts its worker thread (http_request.cpp, `if (use_threads)`). The
+	// JavaScript client has no blocking mode at all: poll() drives the fetch and
+	// reads never block, so the flag is moot and the threaded path works anyway.
+	// Upstream errors here, which printed "HTTPClient blocking mode is not
+	// supported for the HTML5 platform." into every web session that polled for
+	// an update, and changed nothing. Keep the flag ignored, but silently.
+	(void)p_enable;
 }
 
 bool HTTPClient::is_blocking_mode_enabled() const {
