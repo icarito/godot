@@ -34,9 +34,11 @@
 #include "core/input_map.h"
 #include "core/io/file_access_network.h"
 #include "core/io/file_access_pack.h"
+#include "core/io/config_file.h"
 #include "core/io/file_access_zip.h"
 #include "core/io/image_loader.h"
 #include "core/io/ip.h"
+#include "core/io/resource_importer.h"
 #include "core/io/resource_loader.h"
 #include "core/message_queue.h"
 #include "core/os/dir_access.h"
@@ -47,6 +49,7 @@
 #include "core/script_debugger_local.h"
 #include "core/script_language.h"
 #include "core/translation.h"
+#include "core/variant_parser.h"
 #include "core/version.h"
 #include "drivers/register_driver_types.h"
 #include "main/app_icon.gen.h"
@@ -84,6 +87,7 @@
 #include "editor/script_editor_debugger.h"
 #if !defined(_3D_DISABLED)
 #include "scene/3d/baked_lightmap.h"
+#include "scene/main/instance_placeholder.h"
 #endif
 #if defined(TOOLS_ENABLED) && !defined(NO_EDITOR_SPLASH)
 #include "main/splash_editor.gen.h"
@@ -1682,6 +1686,182 @@ Error Main::setup2(Thread::ID p_main_tid_override) {
 	return OK;
 }
 
+#ifdef TOOLS_ENABLED
+
+// The editor provides `ResourceLoader::import` through `EditorFileSystem`, which
+// is only constructed by `EditorNode`. A tools build without an editor (headless
+// bake, `--script`) has neither, so `BakedLightmap::bake()` takes its fallback
+// branch and writes raw `.tex` files instead of PNG + `.import`. This is a
+// standalone equivalent of `EditorFileSystem::_reimport_file()`
+// (editor/editor_file_system.cpp) without the filesystem scan: it reads the
+// `.import` the caller just wrote, runs the registered importer to produce the
+// `.stex`, and rewrites `.import`/`.md5` exactly as the editor does.
+static void _tools_ensure_project_data_dir() {
+	DirAccess *da = DirAccess::create(DirAccess::ACCESS_RESOURCES);
+	String project_data_path = ProjectSettings::get_singleton()->get_project_data_path();
+	if (da->change_dir(project_data_path) != OK) {
+		da->make_dir(project_data_path);
+	}
+	memdelete(da);
+
+	String gdignore = project_data_path.plus_file(".gdignore");
+	if (!FileAccess::exists(gdignore)) {
+		FileAccessRef f = FileAccess::open(gdignore, FileAccess::WRITE);
+		if (f) {
+			f->store_line("");
+			f->close();
+		}
+	}
+}
+
+static Error _tools_resource_import(const String &p_path) {
+	if (!FileAccess::exists(p_path + ".import")) {
+		return ERR_FILE_NOT_FOUND;
+	}
+
+	Map<StringName, Variant> params;
+	String importer_name;
+
+	if (FileAccess::exists(p_path + ".import")) {
+		Ref<ConfigFile> cf;
+		cf.instance();
+		if (cf->load(p_path + ".import") == OK) {
+			if (cf->has_section("params")) {
+				List<String> sk;
+				cf->get_section_keys("params", &sk);
+				for (List<String>::Element *E = sk.front(); E; E = E->next()) {
+					params[E->get()] = cf->get_value("params", E->get());
+				}
+			}
+			if (cf->has_section("remap")) {
+				importer_name = cf->get_value("remap", "importer");
+			}
+		}
+	}
+
+	Ref<ResourceImporter> importer;
+	if (importer_name != "") {
+		importer = ResourceFormatImporter::get_singleton()->get_importer_by_name(importer_name);
+	}
+	if (importer.is_null()) {
+		// Not found by name, find by extension.
+		importer = ResourceFormatImporter::get_singleton()->get_importer_by_extension(p_path.get_extension());
+	}
+	if (importer.is_null()) {
+		ERR_PRINT("Can't find importer for '" + p_path + "'.");
+		return ERR_FILE_UNRECOGNIZED;
+	}
+
+	// Mix with default params, in case a parameter is missing.
+	List<ResourceImporter::ImportOption> opts;
+	importer->get_import_options(&opts);
+	for (List<ResourceImporter::ImportOption>::Element *E = opts.front(); E; E = E->next()) {
+		if (!params.has(E->get().option.name)) {
+			params[E->get().option.name] = E->get().default_value;
+		}
+	}
+
+	_tools_ensure_project_data_dir();
+
+	String base_path = ResourceFormatImporter::get_singleton()->get_import_base_path(p_path);
+
+	List<String> import_variants;
+	List<String> gen_files;
+	Variant metadata;
+	Error err = importer->import(p_path, base_path, params, &import_variants, &gen_files, &metadata);
+	if (err != OK) {
+		ERR_PRINT("Error importing '" + p_path + "'.");
+	}
+
+	// Rewrite the `.import` file with the remap path the loader needs.
+	FileAccess *f = FileAccess::open(p_path + ".import", FileAccess::WRITE);
+	ERR_FAIL_COND_V_MSG(!f, ERR_CANT_CREATE, "Cannot open file from path '" + p_path + ".import'.");
+
+	f->store_line("[remap]");
+	f->store_line("");
+	f->store_line("importer=\"" + importer->get_importer_name() + "\"");
+	if (importer->get_resource_type() != "") {
+		f->store_line("type=\"" + importer->get_resource_type() + "\"");
+	}
+
+	Vector<String> dest_paths;
+
+	if (err == OK) {
+		if (importer->get_save_extension() == "") {
+			//no path
+		} else if (import_variants.size()) {
+			for (List<String>::Element *E = import_variants.front(); E; E = E->next()) {
+				String path = base_path.c_escape() + "." + E->get() + "." + importer->get_save_extension();
+				f->store_line("path." + E->get() + "=\"" + path + "\"");
+				dest_paths.push_back(path);
+			}
+		} else {
+			String path = base_path + "." + importer->get_save_extension();
+			f->store_line("path=\"" + path + "\"");
+			dest_paths.push_back(path);
+		}
+	} else {
+		f->store_line("valid=false");
+	}
+
+	if (metadata != Variant()) {
+		f->store_line("metadata=" + metadata.get_construct_string());
+	}
+
+	f->store_line("");
+	f->store_line("[deps]\n");
+
+	if (gen_files.size()) {
+		Array genf;
+		for (List<String>::Element *E = gen_files.front(); E; E = E->next()) {
+			genf.push_back(E->get());
+			dest_paths.push_back(E->get());
+		}
+		String value;
+		VariantWriter::write_to_string(genf, value);
+		f->store_line("files=" + value);
+		f->store_line("");
+	}
+
+	f->store_line("source_file=" + Variant(p_path).get_construct_string());
+
+	if (dest_paths.size()) {
+		Array dp;
+		for (int i = 0; i < dest_paths.size(); i++) {
+			dp.push_back(dest_paths[i]);
+		}
+		f->store_line("dest_files=" + Variant(dp).get_construct_string() + "\n");
+	}
+
+	f->store_line("[params]");
+	f->store_line("");
+
+	for (List<ResourceImporter::ImportOption>::Element *E = opts.front(); E; E = E->next()) {
+		String base = E->get().option.name;
+		String value;
+		VariantWriter::write_to_string(params[base], value);
+		f->store_line(base + "=" + value);
+	}
+
+	f->close();
+	memdelete(f);
+
+	// Store the md5's of the various files, as the editor does.
+	FileAccess *md5s = FileAccess::open(base_path + ".md5", FileAccess::WRITE);
+	if (md5s) {
+		md5s->store_line("source_md5=\"" + FileAccess::get_md5(p_path) + "\"");
+		if (dest_paths.size()) {
+			md5s->store_line("dest_md5=\"" + FileAccess::get_multiple_md5(dest_paths) + "\"\n");
+		}
+		md5s->close();
+		memdelete(md5s);
+	}
+
+	return err;
+}
+
+#endif // TOOLS_ENABLED
+
 #if defined(TOOLS_ENABLED) && !defined(_3D_DISABLED)
 static bool _bake_lightmap_progress(float p_completion, const String &p_text, void *p_ud, bool p_refresh) {
 	OS::get_singleton()->print("bake-lightmap: [%3d%%] %s\n", int(p_completion * 100.0), p_text.utf8().get_data());
@@ -1695,6 +1875,36 @@ static void _bake_lightmap_collect(Node *p_node, List<BakedLightmap *> &r_lightm
 	}
 	for (int i = 0; i < p_node->get_child_count(); i++) {
 		_bake_lightmap_collect(p_node->get_child(i), r_lightmaps);
+	}
+}
+
+static void _bake_lightmap_collect_placeholders(Node *p_node, List<InstancePlaceholder *> &r_placeholders) {
+	InstancePlaceholder *placeholder = Object::cast_to<InstancePlaceholder>(p_node);
+	if (placeholder) {
+		r_placeholders.push_back(placeholder);
+	}
+	for (int i = 0; i < p_node->get_child_count(); i++) {
+		_bake_lightmap_collect_placeholders(p_node->get_child(i), r_placeholders);
+	}
+}
+
+// Bake rigs (RingHub) and other heavy subtrees ship as InstancePlaceholder so
+// they cost nothing at runtime. A placeholder has no children, so a bake that
+// does not materialize them silently misses whatever lives inside. This replaces
+// every placeholder under the tree (`replace_by_instance`), including nested
+// ones, mirroring the game's editor_bake_* scripts. Scope: it only materializes;
+// it does not flip bake rigs on nor force lights to BAKE_ALL -- that stays the
+// project's setup script's job (the CLI's fixed knobs are bake quality only).
+static void _bake_lightmap_materialize_placeholders(Node *p_root) {
+	while (true) {
+		List<InstancePlaceholder *> placeholders;
+		_bake_lightmap_collect_placeholders(p_root, placeholders);
+		if (placeholders.empty()) {
+			return;
+		}
+		for (List<InstancePlaceholder *>::Element *E = placeholders.front(); E; E = E->next()) {
+			E->get()->replace_by_instance();
+		}
 	}
 }
 
@@ -1722,6 +1932,15 @@ static bool _bake_lightmap_cli(const String &p_scene_path, const String &p_outpu
 	SceneTree *tree = memnew(SceneTree);
 	tree->init();
 	tree->get_root()->add_child(root);
+
+	{
+		List<InstancePlaceholder *> placeholders;
+		_bake_lightmap_collect_placeholders(root, placeholders);
+		if (!placeholders.empty()) {
+			print_line("bake-lightmap: materializing " + itos(placeholders.size()) + " InstancePlaceholder(s).");
+			_bake_lightmap_materialize_placeholders(root);
+		}
+	}
 
 	List<BakedLightmap *> lightmaps;
 	_bake_lightmap_collect(root, lightmaps);
@@ -1887,6 +2106,21 @@ bool Main::start() {
 			doc_tool_path = ".";
 		}
 	}
+
+#ifdef TOOLS_ENABLED
+	// Outside the editor nothing sets `ResourceLoader::import` (EditorFileSystem's
+	// constructor does, and only the editor builds one), so `BakedLightmap::bake()`
+	// would write raw `.tex` files and the shipping PNG + `.import` pipeline would
+	// not run. Tools runs that are not the editor (headless bake via
+	// `--bake-lightmap`, or a `--script`) get the importers registered and a
+	// standalone reimport, so they behave like the editor. The EditorNode
+	// constructor registers them again for the real editor; register_importers()
+	// is idempotent.
+	if (!editor && !project_manager) {
+		EditorNode::register_importers();
+		ResourceLoader::import = _tools_resource_import;
+	}
+#endif
 
 #if defined(TOOLS_ENABLED) && !defined(_3D_DISABLED)
 	if (bake_lightmap) {

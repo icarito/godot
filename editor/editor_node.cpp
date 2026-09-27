@@ -5876,6 +5876,73 @@ int EditorNode::execute_and_show_output(const String &p_title, const String &p_p
 	return eta.exitcode;
 }
 
+void EditorNode::register_importers() {
+	// Idempotent: a tools run without an editor registers them before Main::start()
+	// (see the --bake-lightmap path in main.cpp), and then the EditorNode
+	// constructor would add a second copy. Only the first call has an effect.
+	if (ResourceFormatImporter::get_singleton()->get_importer_by_name("texture").is_valid()) {
+		return;
+	}
+
+	{ //register importers at the beginning, so dialogs are created with the right extensions
+		Ref<ResourceImporterTexture> import_texture;
+		import_texture.instance();
+		ResourceFormatImporter::get_singleton()->add_importer(import_texture);
+
+		Ref<ResourceImporterLayeredTexture> import_3d;
+		import_3d.instance();
+		import_3d->set_3d(true);
+		ResourceFormatImporter::get_singleton()->add_importer(import_3d);
+
+		Ref<ResourceImporterLayeredTexture> import_array;
+		import_array.instance();
+		import_array->set_3d(false);
+		ResourceFormatImporter::get_singleton()->add_importer(import_array);
+
+		Ref<ResourceImporterImage> import_image;
+		import_image.instance();
+		ResourceFormatImporter::get_singleton()->add_importer(import_image);
+
+		Ref<ResourceImporterTextureAtlas> import_texture_atlas;
+		import_texture_atlas.instance();
+		ResourceFormatImporter::get_singleton()->add_importer(import_texture_atlas);
+
+		Ref<ResourceImporterCSVTranslation> import_csv_translation;
+		import_csv_translation.instance();
+		ResourceFormatImporter::get_singleton()->add_importer(import_csv_translation);
+
+		Ref<ResourceImporterWAV> import_wav;
+		import_wav.instance();
+		ResourceFormatImporter::get_singleton()->add_importer(import_wav);
+
+		Ref<ResourceImporterOBJ> import_obj;
+		import_obj.instance();
+		ResourceFormatImporter::get_singleton()->add_importer(import_obj);
+
+		Ref<ResourceImporterScene> import_scene;
+		import_scene.instance();
+		ResourceFormatImporter::get_singleton()->add_importer(import_scene);
+
+		{
+			Ref<EditorSceneImporterCollada> import_collada;
+			import_collada.instance();
+			import_scene->add_importer(import_collada);
+
+			Ref<EditorOBJImporter> import_obj2;
+			import_obj2.instance();
+			import_scene->add_importer(import_obj2);
+
+			Ref<EditorSceneImporterESCN> import_escn;
+			import_escn.instance();
+			import_scene->add_importer(import_escn);
+		}
+
+		Ref<ResourceImporterBitMap> import_bitmap;
+		import_bitmap.instance();
+		ResourceFormatImporter::get_singleton()->add_importer(import_bitmap);
+	}
+}
+
 EditorNode::EditorNode() {
 	OS::get_singleton()->benchmark_begin_measure("editor");
 	EditorPropertyNameProcessor *epnp = memnew(EditorPropertyNameProcessor);
@@ -5978,61 +6045,7 @@ EditorNode::EditorNode() {
 	ResourceLoader::set_dependency_error_notify_func(this, _dependency_error_report);
 
 	{ //register importers at the beginning, so dialogs are created with the right extensions
-		Ref<ResourceImporterTexture> import_texture;
-		import_texture.instance();
-		ResourceFormatImporter::get_singleton()->add_importer(import_texture);
-
-		Ref<ResourceImporterLayeredTexture> import_3d;
-		import_3d.instance();
-		import_3d->set_3d(true);
-		ResourceFormatImporter::get_singleton()->add_importer(import_3d);
-
-		Ref<ResourceImporterLayeredTexture> import_array;
-		import_array.instance();
-		import_array->set_3d(false);
-		ResourceFormatImporter::get_singleton()->add_importer(import_array);
-
-		Ref<ResourceImporterImage> import_image;
-		import_image.instance();
-		ResourceFormatImporter::get_singleton()->add_importer(import_image);
-
-		Ref<ResourceImporterTextureAtlas> import_texture_atlas;
-		import_texture_atlas.instance();
-		ResourceFormatImporter::get_singleton()->add_importer(import_texture_atlas);
-
-		Ref<ResourceImporterCSVTranslation> import_csv_translation;
-		import_csv_translation.instance();
-		ResourceFormatImporter::get_singleton()->add_importer(import_csv_translation);
-
-		Ref<ResourceImporterWAV> import_wav;
-		import_wav.instance();
-		ResourceFormatImporter::get_singleton()->add_importer(import_wav);
-
-		Ref<ResourceImporterOBJ> import_obj;
-		import_obj.instance();
-		ResourceFormatImporter::get_singleton()->add_importer(import_obj);
-
-		Ref<ResourceImporterScene> import_scene;
-		import_scene.instance();
-		ResourceFormatImporter::get_singleton()->add_importer(import_scene);
-
-		{
-			Ref<EditorSceneImporterCollada> import_collada;
-			import_collada.instance();
-			import_scene->add_importer(import_collada);
-
-			Ref<EditorOBJImporter> import_obj2;
-			import_obj2.instance();
-			import_scene->add_importer(import_obj2);
-
-			Ref<EditorSceneImporterESCN> import_escn;
-			import_escn.instance();
-			import_scene->add_importer(import_escn);
-		}
-
-		Ref<ResourceImporterBitMap> import_bitmap;
-		import_bitmap.instance();
-		ResourceFormatImporter::get_singleton()->add_importer(import_bitmap);
+		register_importers();
 	}
 
 	{

@@ -816,6 +816,12 @@ public:
 	static void register_editor_types();
 	static void unregister_editor_types();
 
+	// Registers the ResourceImporter instances on the ResourceFormatImporter
+	// singleton. Idempotent. The EditorNode constructor calls it, but a tools build
+	// without an editor (headless lightmap bake) needs the importers too: nothing
+	// else creates an EditorNode, so resource import would otherwise be unavailable.
+	static void register_importers();
+
 	Control *get_gui_base() { return gui_base; }
 	Control *get_theme_base() { return gui_base->get_parent_control(); }
 
