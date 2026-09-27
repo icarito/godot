@@ -133,6 +133,7 @@ public:
 
 	static bool async_hidden_forbidden;
 	static bool ubershaders_enabled;
+	static bool cache_conditioned_variants;
 	static uint32_t *compiles_started_this_frame;
 	static uint32_t *max_frame_compiles_in_progress;
 	static uint32_t max_simultaneous_compiles;
@@ -157,7 +158,15 @@ private:
 		VersionKey() {}
 		VersionKey(uint64_t p_key) :
 				key(p_key) {}
-		_FORCE_INLINE_ bool is_subject_to_caching() const { return (version & UBERSHADER_FLAG); }
+		// Upstream solo cachea ubershaders. Eso deja fuera justo lo que se dibuja: las
+		// variantes condicionadas se recompilan enteras en cada arranque, y en un aparato
+		// que no puede enlazar el ubershader el cache termina guardando lo unico inservible.
+		// El hash del programa ya sale del fuente completo, asi que sirve igual para
+		// cualquier variante; lo que hay que vigilar es el tamaño, y de eso se ocupa
+		// _purge_excess() con shader_cache_size_mb.
+		_FORCE_INLINE_ bool is_subject_to_caching() const {
+			return (version & UBERSHADER_FLAG) || cache_conditioned_variants;
+		}
 	};
 
 	struct Version {

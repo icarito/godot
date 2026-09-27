@@ -66,6 +66,7 @@ bool ShaderGLES3::parallel_compile_supported;
 
 bool ShaderGLES3::async_hidden_forbidden;
 bool ShaderGLES3::ubershaders_enabled;
+bool ShaderGLES3::cache_conditioned_variants;
 uint32_t *ShaderGLES3::compiles_started_this_frame;
 uint32_t *ShaderGLES3::max_frame_compiles_in_progress;
 uint32_t ShaderGLES3::max_simultaneous_compiles;

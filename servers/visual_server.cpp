@@ -2794,6 +2794,12 @@ VisualServer::VisualServer() {
 	// pantalla que cubra el trabajo.
 	GLOBAL_DEF("rendering/gles3/shaders/async_compilation_starts_enabled", true);
 	GLOBAL_DEF("rendering/gles3/shaders/ubershaders_enabled", true);
+	// Guardar tambien las variantes condicionadas, no solo los ubershaders. Cuesta
+	// espacio en disco (lo acota shader_cache_size_mb) y ahorra recompilarlas en cada
+	// arranque, que es donde se va el tiempo cuando el ubershader no se usa.
+	GLOBAL_DEF("rendering/gles3/shaders/cache_conditioned_variants", false);
+	// Mantener el cache de programas aunque la compilacion sea sincrona.
+	GLOBAL_DEF("rendering/gles3/shaders/shader_cache_always", false);
 	GLOBAL_DEF("rendering/gles3/shaders/shader_compilation_mode", 0);
 	ProjectSettings::get_singleton()->set_custom_property_info("rendering/gles3/shaders/shader_compilation_mode", PropertyInfo(Variant::INT, "rendering/gles3/shaders/shader_compilation_mode", PROPERTY_HINT_ENUM, "Synchronous,Asynchronous,Asynchronous + Cache"));
 	GLOBAL_DEF("rendering/gles3/shaders/shader_compilation_mode.mobile", 0);

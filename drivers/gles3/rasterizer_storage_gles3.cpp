@@ -8249,8 +8249,13 @@ void RasterizerStorageGLES3::initialize() {
 		compilation_mode = ProjectSettings::get_singleton()->get("rendering/gles3/shaders/shader_compilation_mode");
 	}
 	config.async_compilation_enabled = compilation_mode >= 1;
-	config.shader_cache_enabled = compilation_mode == 2;
+	// El cache venia atado al modo: en sincrono no se guardaba nada, asi que cada
+	// arranque recompilaba todo para siempre. Son cosas independientes -- guardar el
+	// binario de un programa no exige compilarlo en otro hilo -- y en un aparato donde
+	// el ubershader no rinde, sincrono es justo el modo que mas necesita el cache.
+	config.shader_cache_enabled = compilation_mode == 2 || (bool)GLOBAL_GET("rendering/gles3/shaders/shader_cache_always");
 	ShaderGLES3::ubershaders_enabled = GLOBAL_GET("rendering/gles3/shaders/ubershaders_enabled");
+	ShaderGLES3::cache_conditioned_variants = GLOBAL_GET("rendering/gles3/shaders/cache_conditioned_variants");
 
 	if (config.async_compilation_enabled) {
 		config.async_compilation_max_simultaneous = MAX(1, (int)ProjectSettings::get_singleton()->get("rendering/gles3/shaders/max_simultaneous_compiles"));
@@ -8302,34 +8307,32 @@ void RasterizerStorageGLES3::initialize() {
 	shaders.compile_queue = nullptr;
 	shaders.cache = nullptr;
 	shaders.cache_write_queue = nullptr;
-	bool effectively_on = false;
 	if (config.async_compilation_enabled) {
 		if (config.parallel_shader_compile_supported) {
 			print_line("Async. shader compilation: ON (full native support)");
-			effectively_on = true;
 		} else if (config.program_binary_supported && OS::get_singleton()->is_offscreen_gl_available()) {
 			shaders.compile_queue = memnew(ThreadedCallableQueue<GLuint>());
 			shaders.compile_queue->enqueue(0, []() { OS::get_singleton()->set_offscreen_gl_current(true); });
 			print_line("Async. shader compilation: ON (via secondary context)");
-			effectively_on = true;
 		} else {
 			print_line("Async. shader compilation: OFF (enabled for " + String(Engine::get_singleton()->is_editor_hint() ? "editor" : "project") + ", but not supported)");
 		}
-		if (effectively_on) {
-			if (config.shader_cache_enabled) {
-				if (config.program_binary_supported) {
-					print_line("Shader cache: ON");
-					shaders.cache = memnew(ShaderCacheGLES3);
-					shaders.cache_write_queue = memnew(ThreadedCallableQueue<GLuint>());
-				} else {
-					print_line("Shader cache: OFF (enabled, but not supported)");
-				}
-			} else {
-				print_line("Shader cache: OFF");
-			}
-		}
 	} else {
 		print_line("Async. shader compilation: OFF");
+	}
+	// El cache vivia dentro del bloque de async y solo se creaba si el async quedaba
+	// efectivamente encendido. Guardar el binario de un programa no depende de en que
+	// hilo se compilo, asi que ahora se decide solo.
+	if (config.shader_cache_enabled) {
+		if (config.program_binary_supported) {
+			print_line("Shader cache: ON");
+			shaders.cache = memnew(ShaderCacheGLES3);
+			shaders.cache_write_queue = memnew(ThreadedCallableQueue<GLuint>());
+		} else {
+			print_line("Shader cache: OFF (enabled, but not supported)");
+		}
+	} else {
+		print_line("Shader cache: OFF");
 	}
 	ShaderGLES3::compile_queue = shaders.compile_queue;
 	ShaderGLES3::parallel_compile_supported = config.parallel_shader_compile_supported;
