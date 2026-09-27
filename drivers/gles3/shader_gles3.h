@@ -385,7 +385,7 @@ private:
 		}
 	}
 
-	bool _bind(bool p_binding_fallback);
+	bool _bind(bool p_binding_fallback, bool p_is_ubershader = false);
 	bool _bind_ubershader(bool p_for_warmrup = false);
 
 protected:

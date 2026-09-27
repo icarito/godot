@@ -97,7 +97,7 @@ bool ShaderGLES3::bind() {
 	return _bind(false);
 }
 
-bool ShaderGLES3::_bind(bool p_binding_fallback) {
+bool ShaderGLES3::_bind(bool p_binding_fallback, bool p_is_ubershader) {
 	// Same base shader and version valid version?
 	if (active == this && version) {
 		if (new_conditional_version.code_version == conditional_version.code_version) {
@@ -142,7 +142,7 @@ bool ShaderGLES3::_bind(bool p_binding_fallback) {
 		DEBUG_TEST_ERROR("Use Program");
 		active = this;
 		return true;
-	} else if (ubershaders_enabled && !must_be_ready_now && version->async_mode == ASYNC_MODE_VISIBLE && !p_binding_fallback && get_ubershader_flags_uniform() != -1) {
+	} else if (!p_is_ubershader && ubershaders_enabled && !must_be_ready_now && version->async_mode == ASYNC_MODE_VISIBLE && !p_binding_fallback && get_ubershader_flags_uniform() != -1) {
 		// We can and have to fall back to the ubershader
 		return _bind_ubershader();
 	} else {
@@ -186,12 +186,30 @@ bool ShaderGLES3::_bind_ubershader(bool p_for_warmup) {
 	ERR_FAIL_COND_V(get_ubershader_flags_uniform() == -1, false);
 #endif
 	new_conditional_version.version |= VersionKey::UBERSHADER_FLAG;
-	bool bound = _bind(true);
+#ifdef JAVASCRIPT_ENABLED
+	// WebGL only reaches this fallback with native parallel compilation
+	// (KHR_parallel_shader_compile), because there is no secondary context.
+	// Forcing the ubershader to be ready here builds it synchronously on the
+	// main thread: a mesh whose variant is not cached yet then blocks for as
+	// long as the driver takes (hundreds of ms each, ~15 s across a level's
+	// shaders) and the page reads as hung. Start the build and let this draw be
+	// skipped until it -- or the real variant, whose async compile was already
+	// started above -- is ready. The ubershader is still used once it links.
+	bool bound = _bind(false, true);
+#else
+	bool bound = _bind(true, true);
+#endif
 	new_conditional_version.version &= ~VersionKey::UBERSHADER_FLAG;
 	if (p_for_warmup) {
 		// Avoid GL UB message id 131222 caused by shadow samplers not properly set up yet
 		unbind();
 		return bound;
+	}
+	if (!bound) {
+		// Not ready yet: the ubershader was just enqueued. Skipping the draw is
+		// the point (see above); without a bound program the flags uniform below
+		// cannot be set, and unbind() has already run.
+		return false;
 	}
 	int conditionals_uniform = _get_uniform(get_ubershader_flags_uniform());
 #ifdef DEBUG_ENABLED
