@@ -352,7 +352,13 @@ bool ShaderGLES3::_process_program_state(Version *p_version, bool p_async_forbid
 				// This is from the async. queue
 				switch (p_version->program_binary.result_from_queue.get()) {
 					case -1: { // Error
-						p_version->compile_status = Version::COMPILE_STATUS_ERROR;
+						// The secondary context failed to build this one (some drivers, e.g. Adreno,
+						// reject the ubershader there). Retry it synchronously in the main context.
+						WARN_PRINT(p_version->shader->get_shader_name() + ": shader compile queue failed; falling back to synchronous compilation.");
+						p_version->queue_rejected = true;
+						glDeleteProgram(p_version->ids.main);
+						p_version->ids.main = 0;
+						p_version->compile_status = Version::COMPILE_STATUS_RESTART_NEEDED;
 						p_version->compiling_list.remove_from_list();
 						active_compiles_count--;
 #ifdef DEV_ENABLED
@@ -440,9 +446,15 @@ bool ShaderGLES3::_process_program_state(Version *p_version, bool p_async_forbid
 							p_version->compile_status = Version::COMPILE_STATUS_RESTART_NEEDED;
 						} else {
 							if (p_version->program_binary.source == Version::ProgramBinary::SOURCE_QUEUE) {
-								ERR_PRINT("Program binary from compile queue has been rejected by the GL. Bug?");
+								WARN_PRINT("Program binary from compile queue has been rejected by the GL. Falling back to synchronous compilation.");
+								p_version->queue_rejected = true;
+								if (shader_cache) {
+									shader_cache->remove(p_version->program_binary.cache_hash);
+								}
+								p_version->compile_status = Version::COMPILE_STATUS_RESTART_NEEDED;
+							} else {
+								p_version->compile_status = Version::COMPILE_STATUS_ERROR;
 							}
-							p_version->compile_status = Version::COMPILE_STATUS_ERROR;
 						}
 					}
 					p_version->program_binary.data = PoolByteArray();
@@ -802,6 +814,7 @@ ShaderGLES3::Version *ShaderGLES3::get_current_version(bool &r_async_forbidden) 
 
 	if (!r_async_forbidden) {
 		r_async_forbidden =
+				v.queue_rejected ||
 				(v.async_mode == ASYNC_MODE_HIDDEN && async_hidden_forbidden) ||
 				(v.async_mode == ASYNC_MODE_VISIBLE && get_ubershader_flags_uniform() == -1);
 	}
@@ -848,6 +861,7 @@ ShaderGLES3::Version *ShaderGLES3::get_current_version(bool &r_async_forbidden) 
 			concat_shader_strings(strings_fragment, &fragment_code);
 
 			v.program_binary.source = Version::ProgramBinary::SOURCE_QUEUE;
+			v.program_binary.result_from_queue.set(0);
 			v.compile_status = Version::COMPILE_STATUS_PROCESSING_AT_QUEUE;
 			versions_compiling.add_last(&v.compiling_list);
 			active_compiles_count++;
@@ -875,7 +889,7 @@ ShaderGLES3::Version *ShaderGLES3::get_current_version(bool &r_async_forbidden) 
 					glDeleteProgram(async_ids.main);
 					v.program_binary.result_from_queue.set(1);
 				} else {
-					v.program_binary.result_from_queue.set(0);
+					v.program_binary.result_from_queue.set(-1);
 				}
 			});
 		} else {

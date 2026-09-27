@@ -193,6 +193,7 @@ private:
 			COMPILE_STATUS_OK,
 		};
 		CompileStatus compile_status;
+		bool queue_rejected; // The binary built by the secondary context was rejected; only compile this variant in the main context.
 		SelfList<Version> compiling_list;
 
 		struct ProgramBinary {
@@ -219,6 +220,7 @@ private:
 				uniforms_ready(false),
 				last_frame_processed(UINT64_MAX),
 				compile_status(COMPILE_STATUS_PENDING),
+				queue_rejected(false),
 				compiling_list(this),
 				program_binary() {}
 	};
