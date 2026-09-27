@@ -360,6 +360,19 @@ public class GodotInputHandler implements InputManager.InputDeviceListener {
 		GodotLib.joyconnectionchanged(id, true, joystick.name);
 	}
 
+	/**
+	 * Rumble on the controller Godot knows as {@code godotJoyId} (Input.start_joy_vibration()).
+	 * Zero magnitudes stop it.
+	 */
+	public void vibrateJoypad(int godotJoyId, float weakMagnitude, float strongMagnitude, float durationSec) {
+		int index = mJoystickIds.indexOfValue(godotJoyId);
+		if (index < 0) {
+			return;
+		}
+		InputDevice device = inputManager.getInputDevice(mJoystickIds.keyAt(index));
+		JoypadVibrator.vibrate(device, weakMagnitude, strongMagnitude, durationSec);
+	}
+
 	@Override
 	public void onInputDeviceRemoved(int deviceId) {
 		// Check if the device has not been already removed

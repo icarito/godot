@@ -70,6 +70,7 @@ private:
 	jmethodID _get_surface = nullptr;
 	jmethodID _is_activity_resumed = nullptr;
 	jmethodID _vibrate = nullptr;
+	jmethodID _vibrate_joypad = nullptr;
 	jmethodID _get_input_fallback_mapping = nullptr;
 	jmethodID _on_godot_setup_completed = nullptr;
 	jmethodID _on_godot_main_loop_started = nullptr;
@@ -114,6 +115,7 @@ public:
 	jobject get_surface();
 	bool is_activity_resumed();
 	void vibrate(int p_duration_ms);
+	void vibrate_joypad(int p_device, float p_weak_magnitude, float p_strong_magnitude, float p_duration);
 	String get_input_fallback_mapping();
 	int create_new_godot_instance(List<String> args);
 	void begin_benchmark_measure(const String &p_label);

@@ -544,6 +544,18 @@ public class Godot extends Fragment implements SensorEventListener, IDownloaderC
 		}
 	}
 
+	/**
+	 * Used by the native code (java_godot_lib_jni.cpp) to rumble a game controller.
+	 */
+	@Keep
+	private void vibrateJoypad(int godotJoyId, float weakMagnitude, float strongMagnitude, float durationSec) {
+		GodotView renderView = getRenderView();
+		GodotInputHandler inputHandler = renderView != null ? renderView.getInputHandler() : null;
+		if (inputHandler != null) {
+			inputHandler.vibrateJoypad(godotJoyId, weakMagnitude, strongMagnitude, durationSec);
+		}
+	}
+
 	public void restart() {
 		if (godotHost != null) {
 			godotHost.onGodotRestartRequested(this);

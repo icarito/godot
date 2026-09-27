@@ -77,6 +77,7 @@ GodotJavaWrapper::GodotJavaWrapper(JNIEnv *p_env, jobject p_activity, jobject p_
 	_get_surface = p_env->GetMethodID(godot_class, "getSurface", "()Landroid/view/Surface;");
 	_is_activity_resumed = p_env->GetMethodID(godot_class, "isActivityResumed", "()Z");
 	_vibrate = p_env->GetMethodID(godot_class, "vibrate", "(I)V");
+	_vibrate_joypad = p_env->GetMethodID(godot_class, "vibrateJoypad", "(IFFF)V");
 	_get_input_fallback_mapping = p_env->GetMethodID(godot_class, "getInputFallbackMapping", "()Ljava/lang/String;");
 	_on_godot_setup_completed = p_env->GetMethodID(godot_class, "onGodotSetupCompleted", "()V");
 	_on_godot_main_loop_started = p_env->GetMethodID(godot_class, "onGodotMainLoopStarted", "()V");
@@ -373,6 +374,14 @@ void GodotJavaWrapper::vibrate(int p_duration_ms) {
 		JNIEnv *env = get_jni_env();
 		ERR_FAIL_NULL(env);
 		env->CallVoidMethod(godot_instance, _vibrate, p_duration_ms);
+	}
+}
+
+void GodotJavaWrapper::vibrate_joypad(int p_device, float p_weak_magnitude, float p_strong_magnitude, float p_duration) {
+	if (_vibrate_joypad) {
+		JNIEnv *env = get_jni_env();
+		ERR_FAIL_NULL(env);
+		env->CallVoidMethod(godot_instance, _vibrate_joypad, p_device, p_weak_magnitude, p_strong_magnitude, p_duration);
 	}
 }
 

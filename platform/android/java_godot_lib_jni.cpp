@@ -37,6 +37,7 @@
 #include "api/java_class_wrapper.h"
 #include "api/jni_singleton.h"
 #include "core/engine.h"
+#include "core/hash_map.h"
 #include "core/project_settings.h"
 #include "dir_access_jandroid.h"
 #include "file_access_android.h"
@@ -62,6 +63,31 @@ static OS_Android *os_android = nullptr;
 static AndroidInputHandler *input_handler = nullptr;
 static GodotJavaWrapper *godot_java = nullptr;
 static GodotIOJavaWrapper *godot_io_java = nullptr;
+
+// Last Input.start_joy_vibration() timestamp handed to Java, per joypad.
+static HashMap<int, uint64_t> joy_vibration_applied;
+
+static void _process_joy_vibration() {
+	InputDefault *input = (InputDefault *)Input::get_singleton();
+	if (!input) {
+		return;
+	}
+	Array joypads = input->get_connected_joypads();
+	for (int i = 0; i < joypads.size(); i++) {
+		int device = joypads[i];
+		uint64_t timestamp = input->get_joy_vibration_timestamp(device);
+		uint64_t *applied = joy_vibration_applied.getptr(device);
+		if (applied && timestamp <= *applied) {
+			continue;
+		}
+		if (!applied && timestamp == 0) {
+			continue;
+		}
+		joy_vibration_applied[device] = timestamp;
+		Vector2 strength = input->get_joy_vibration_strength(device);
+		godot_java->vibrate_joypad(device, strength.x, strength.y, input->get_joy_vibration_duration(device));
+	}
+}
 
 static SafeNumeric<int> step; // Shared between UI and render threads
 
@@ -293,6 +319,7 @@ JNIEXPORT jboolean JNICALL Java_org_godotengine_godot_GodotLib_step(JNIEnv *env,
 	os_android->process_gravity(gravity);
 	os_android->process_magnetometer(magnetometer);
 	os_android->process_gyroscope(gyroscope);
+	_process_joy_vibration();
 
 	bool should_swap_buffers = false;
 	if (os_android->main_loop_iterate(&should_swap_buffers)) {
