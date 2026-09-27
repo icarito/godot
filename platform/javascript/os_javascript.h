@@ -78,6 +78,9 @@ private:
 	EMSCRIPTEN_WEBGL_CONTEXT_HANDLE webgl_ctx;
 
 	InputDefault *input;
+	// Last Input.start_joy_vibration() timestamp sent to each gamepad's vibrationActuator.
+	enum { JOYPADS_MAX = 16 };
+	uint64_t joy_vibration_applied[JOYPADS_MAX] = {};
 	CursorShape cursor_shape;
 	Point2 touches[32];
 

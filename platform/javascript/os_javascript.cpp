@@ -827,6 +827,14 @@ void OS_JavaScript::process_joypads() {
 		for (int a = 0; a < s_axes_num; a++) {
 			input->joy_axis(idx, a, s_axes[a]);
 		}
+		if (idx < JOYPADS_MAX) {
+			uint64_t timestamp = input->get_joy_vibration_timestamp(idx);
+			if (timestamp > joy_vibration_applied[idx]) {
+				joy_vibration_applied[idx] = timestamp;
+				Vector2 strength = input->get_joy_vibration_strength(idx);
+				godot_js_input_gamepad_vibrate(idx, strength.x, strength.y, input->get_joy_vibration_duration(idx));
+			}
+		}
 	}
 }
 

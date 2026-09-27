@@ -618,6 +618,41 @@ const GodotInput = {
 		return 0;
 	},
 
+	// Input.start_joy_vibration() through the Gamepad API's vibrationActuator ("dual-rumble",
+	// Chromium and Firefox with a rumble-capable pad; Safari has no actuator and this does nothing).
+	godot_js_input_gamepad_vibrate__sig: 'vifff',
+	godot_js_input_gamepad_vibrate: function (p_index, p_weak, p_strong, p_duration) {
+		const pad = GodotInputGamepads.get_pads()[p_index];
+		const actuator = pad ? pad.vibrationActuator : null;
+		if (!actuator) {
+			return;
+		}
+		try {
+			if (p_weak <= 0 && p_strong <= 0) {
+				if (actuator.reset) {
+					actuator.reset();
+				}
+				return;
+			}
+			if (!actuator.playEffect) {
+				return;
+			}
+			// Godot's duration 0 means "until stopped"; browsers cap an effect at 5 s.
+			const duration = p_duration > 0 ? Math.min(p_duration * 1000, 5000) : 5000;
+			const result = actuator.playEffect('dual-rumble', {
+				startDelay: 0,
+				duration: duration,
+				weakMagnitude: p_weak,
+				strongMagnitude: p_strong,
+			});
+			if (result && result.catch) {
+				result.catch(function () {});
+			}
+		} catch (e) {
+			// A pad without dual-rumble rejects the effect type: nothing to do.
+		}
+	},
+
 	godot_js_input_gamepad_sample_get__sig: 'iiiiiii',
 	godot_js_input_gamepad_sample_get: function (p_index, r_btns, r_btns_num, r_axes, r_axes_num, r_standard) {
 		const sample = GodotInputGamepads.get_sample(p_index);
