@@ -2358,6 +2358,12 @@ bool Main::iteration() {
 		advance.physics_steps = max_physics_steps;
 	}
 
+	// FRT_PERF: `physics_process_ticks` guarda el MAX de un paso. A fps bajos el motor
+	// corre varios pasos de fisica por frame (catch-up), asi que el costo real de
+	// fisica es la SUMA; la diferencia con el max explica gran parte de "other".
+	uint64_t physics_process_usec_sum = 0;
+	int physics_steps_this_frame = 0;
+
 	bool exit = false;
 
 	for (int iters = 0; iters < advance.physics_steps; ++iters) {
@@ -2405,6 +2411,8 @@ bool Main::iteration() {
 
 		physics_process_ticks = MAX(physics_process_ticks, OS::get_singleton()->get_ticks_usec() - physics_begin); // keep the largest one for reference
 		physics_process_max = MAX(OS::get_singleton()->get_ticks_usec() - physics_begin, physics_process_max);
+		physics_process_usec_sum += OS::get_singleton()->get_ticks_usec() - physics_begin;
+		physics_steps_this_frame++;
 
 		Engine::get_singleton()->_in_physics = false;
 	}
@@ -2429,7 +2437,13 @@ bool Main::iteration() {
 
 	message_queue->flush();
 
+	uint64_t sync_begin = OS::get_singleton()->get_ticks_usec();
 	VisualServer::get_singleton()->sync(); //sync if still drawing from previous frames.
+	uint64_t sync_ticks = OS::get_singleton()->get_ticks_usec() - sync_begin;
+
+	// FRT_PERF: tiempo de CPU del pase de render (incluye el swap). Permite partir el
+	// frame en idle / fisica / render y ver que queda para vsync/driver.
+	uint64_t render_begin = OS::get_singleton()->get_ticks_usec();
 
 	if (OS::get_singleton()->can_draw() && VisualServer::get_singleton()->is_render_loop_enabled()) {
 		if ((!force_redraw_requested) && OS::get_singleton()->is_in_low_processor_usage_mode()) {
@@ -2453,6 +2467,8 @@ bool Main::iteration() {
 		}
 	}
 
+	uint64_t render_ticks = OS::get_singleton()->get_ticks_usec() - render_begin;
+
 #ifndef TOOLS_ENABLED
 	// we can choose to sync delta from here, just after the draw
 	if (delta_sync_after_draw) {
@@ -2464,6 +2480,42 @@ bool Main::iteration() {
 	idle_process_ticks = OS::get_singleton()->get_ticks_usec() - idle_begin;
 	idle_process_max = MAX(idle_process_ticks, idle_process_max);
 	uint64_t frame_time = OS::get_singleton()->get_ticks_usec() - raw_ticks_at_start;
+
+	// FRT_PERF: resumen cada 120 frames, en ms por frame. `idle` descuenta el render
+	// (idle_process_ticks incluye el pase de dibujo) y `rest` es lo que sobra para
+	// vsync/sleep/driver. Apagado por defecto: sin FRT_PERF en el env no hace nada.
+	{
+		static const bool frt_perf = OS::get_singleton()->has_environment("FRT_PERF");
+		if (frt_perf) {
+			static uint64_t acc_frame = 0, acc_idle = 0, acc_phys = 0, acc_phys_sum = 0, acc_render = 0, acc_sync = 0;
+			static int perf_frames = 0, acc_steps = 0;
+			acc_frame += frame_time;
+			acc_idle += (idle_process_ticks > render_ticks) ? idle_process_ticks - render_ticks : 0;
+			acc_phys += physics_process_ticks;
+			acc_phys_sum += physics_process_usec_sum;
+			acc_render += render_ticks;
+			acc_sync += sync_ticks;
+			acc_steps += physics_steps_this_frame;
+			perf_frames++;
+			if (perf_frames >= 120) {
+				double n = double(perf_frames);
+				double f = double(acc_frame) / n;
+				double rest_us = f - double(acc_idle + acc_phys_sum + acc_render + acc_sync) / n;
+				print_line("[FRT_PERF] frame=" + rtos(f / 1000.0) +
+						" idle=" + rtos(double(acc_idle) / n / 1000.0) +
+						" phys=" + rtos(double(acc_phys) / n / 1000.0) +
+						" phys_sum=" + rtos(double(acc_phys_sum) / n / 1000.0) +
+						" steps=" + rtos(double(acc_steps) / n) +
+						" render=" + rtos(double(acc_render) / n / 1000.0) +
+						" sync=" + rtos(double(acc_sync) / n / 1000.0) +
+						" other=" + rtos(rest_us / 1000.0) +
+						" fps=" + rtos(1000000.0 / (f > 0.0 ? f : 1.0)));
+				acc_frame = acc_idle = acc_phys = acc_phys_sum = acc_render = acc_sync = 0;
+				acc_steps = 0;
+				perf_frames = 0;
+			}
+		}
+	}
 
 	for (int i = 0; i < ScriptServer::get_language_count(); i++) {
 		ScriptServer::get_language(i)->frame();
