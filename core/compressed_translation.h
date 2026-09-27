@@ -65,7 +65,13 @@ class PHashTranslation : public Translation {
 			d = 0x1000193;
 		}
 		while (*p_str) {
-			d = (d * 0x1000193) ^ uint32_t(*p_str);
+			// Hash UTF-8 bytes with an explicit sign, not the target's plain
+			// `char`. Plain char is signed on x86 (editor/baker) but unsigned
+			// on ARM64 (AAPCS, FRT handhelds), so bytes >= 0x80 hashed
+			// differently per platform: non-ASCII keys resolved on the editor
+			// but failed on device. Mirroring the signed behavior keeps
+			// existing .translation files valid and is platform-independent.
+			d = (d * 0x1000193) ^ uint32_t((signed char)*p_str);
 			p_str++;
 		}
 
