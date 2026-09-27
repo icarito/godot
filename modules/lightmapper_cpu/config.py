@@ -9,7 +9,9 @@ def can_build(env, platform):
     if platform == "android":
         return env["android_arch"] in ["arm64v8", "x86_64"]
 
-    if platform in ["javascript", "server"]:
+    # Keep in sync with `modules/raycast/config.py`: the CPU lightmapper is also
+    # enabled on `server` so headless tools builds can bake lightmaps.
+    if platform == "javascript":
         return False
 
     if env["bits"] == "32":

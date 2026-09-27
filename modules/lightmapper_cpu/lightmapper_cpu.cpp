@@ -208,7 +208,10 @@ Error LightmapperCPU::_layout_atlas(int p_max_size, Vector2i *r_atlas_size, int 
 void LightmapperCPU::_thread_func_callback(void *p_thread_data) {
 	ThreadData *thread_data = reinterpret_cast<ThreadData *>(p_thread_data);
 #ifdef TOOLS_ENABLED
-	const int num_threads = EDITOR_GET("editors/3d/lightmap_baking_number_of_cpu_threads");
+	// `EDITOR_GET` reads from the EditorSettings singleton, which only exists while
+	// the editor is running. A tools build can also bake from the command line
+	// (`--bake-lightmap`) without any editor: fall back to 0 (auto) then.
+	const int num_threads = EditorSettings::get_singleton() ? (int)EDITOR_GET("editors/3d/lightmap_baking_number_of_cpu_threads") : 0;
 #else
 	const int num_threads = 0;
 #endif

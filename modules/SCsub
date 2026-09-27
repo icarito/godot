@@ -11,10 +11,21 @@ env_modules = env.Clone()
 Export("env_modules")
 
 env.Depends("modules_enabled.gen.h", Value(env.module_list))
-env.CommandNoCache("modules_enabled.gen.h", Value(env.module_list), modules_builders.generate_modules_enabled)
+# This header decides which `register_*_types()` the generated cpp calls. It must
+# be a tracked, ordered dependency of that object: with `CommandNoCache` the
+# header stayed out of the signature database, so after the module set changed
+# between build variants (x11 editor vs javascript/server) the object could be
+# compiled against a stale header and SCons never rebuilt it. The module then
+# silently never registered (the CPU lightmapper's raycast module among them,
+# which makes BakedLightmap bake fail with BAKE_ERROR_NO_RAYCASTER, reported as
+# BAKE_ERROR_NO_LIGHTMAPPER).
+env.Command("modules_enabled.gen.h", Value(env.module_list), modules_builders.generate_modules_enabled)
 
 env.modules_sources = []
 env_modules.add_source_files(env.modules_sources, "register_module_types.gen.cpp")
+# Make the ordering explicit too: the include scanner did not record this
+# generated header as a dependency.
+env.Depends(env.modules_sources, "modules_enabled.gen.h")
 
 for name, path in env.module_list.items():
     if not os.path.isabs(path):
