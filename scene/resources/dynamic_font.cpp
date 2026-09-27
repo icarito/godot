@@ -525,16 +525,11 @@ float DynamicFontAtSize::draw_char(RID p_canvas_item, const Point2 &p_pos, CharT
 	float advance = 0.0;
 
 	// use normal character size if there's no outline character
+	// Only the advance is needed: rendering it through _bitmap_to_character packed the glyph
+	// into the atlas again on every draw, growing the font textures without bound.
 	if (p_outline && !ch->found) {
-		FT_GlyphSlot slot = face->glyph;
-		int error = FT_Load_Char(face, c, FT_HAS_COLOR(face) ? FT_LOAD_COLOR : FT_LOAD_DEFAULT);
-		if (!error) {
-			error = FT_Render_Glyph(face->glyph, FT_RENDER_MODE_NORMAL);
-			if (!error) {
-				Character character = Character::not_found();
-				character = const_cast<DynamicFontAtSize *>(this)->_bitmap_to_character(slot->bitmap, slot->bitmap_top, slot->bitmap_left, slot->advance.x / 64.0);
-				advance = character.advance;
-			}
+		if (FT_Load_Char(face, c, FT_HAS_COLOR(face) ? FT_LOAD_COLOR : FT_LOAD_DEFAULT) == 0) {
+			advance = face->glyph->advance.x / 64.0 * scale_color_font / oversampling;
 		}
 	}
 
