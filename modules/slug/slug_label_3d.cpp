@@ -8,6 +8,7 @@
 
 #include "core/core_string_names.h"
 #include "core/os/os.h"
+#include "scene/resources/dynamic_font.h"
 #include "servers/visual_server.h"
 
 void SlugLabel3D::_bind_methods() {
@@ -32,6 +33,9 @@ void SlugLabel3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_billboard", "billboard"), &SlugLabel3D::set_billboard);
 	ClassDB::bind_method(D_METHOD("get_billboard"), &SlugLabel3D::get_billboard);
 
+	ClassDB::bind_method(D_METHOD("set_fallback_font", "font"), &SlugLabel3D::set_fallback_font);
+	ClassDB::bind_method(D_METHOD("get_fallback_font"), &SlugLabel3D::get_fallback_font);
+
 	ClassDB::bind_method(D_METHOD("_update_mesh"), &SlugLabel3D::_update_mesh);
 	ClassDB::bind_method(D_METHOD("_font_changed"), &SlugLabel3D::_font_changed);
 
@@ -42,6 +46,7 @@ void SlugLabel3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "align", PROPERTY_HINT_ENUM, "Left,Center,Right"), "set_align", "get_align");
 	ADD_PROPERTY(PropertyInfo(Variant::REAL, "line_spacing"), "set_line_spacing", "get_line_spacing");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "billboard"), "set_billboard", "get_billboard");
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "fallback_font", PROPERTY_HINT_RESOURCE_TYPE, "Font"), "set_fallback_font", "get_fallback_font");
 
 	BIND_ENUM_CONSTANT(ALIGN_LEFT);
 	BIND_ENUM_CONSTANT(ALIGN_CENTER);
@@ -146,6 +151,18 @@ bool SlugLabel3D::get_billboard() const {
 	return billboard;
 }
 
+void SlugLabel3D::set_fallback_font(const Ref<Font> &p_font) {
+	if (fallback_font == p_font) {
+		return;
+	}
+	fallback_font = p_font;
+	_queue_update();
+}
+
+Ref<Font> SlugLabel3D::get_fallback_font() const {
+	return fallback_font;
+}
+
 AABB SlugLabel3D::get_aabb() const {
 	return aabb;
 }
@@ -154,19 +171,70 @@ PoolVector<Face3> SlugLabel3D::get_faces(uint32_t p_usage_flags) const {
 	return PoolVector<Face3>();
 }
 
+void SlugLabel3D::_update_fallback_label() {
+	if (!fallback_label) {
+		fallback_label = memnew(Label3D);
+		fallback_label->set_name("_SlugFallback");
+		add_child(fallback_label);
+	}
+
+	fallback_label->set_text(text);
+	fallback_label->set_modulate(modulate);
+	fallback_label->set_horizontal_alignment((Label3D::Align)(int)align);
+	fallback_label->set_line_spacing(line_spacing);
+	fallback_label->set_billboard_mode(billboard ? Material3D::BILLBOARD_ENABLED : Material3D::BILLBOARD_DISABLED);
+	fallback_label->set_draw_flag(Label3D::FLAG_DOUBLE_SIDED, true);
+	fallback_label->set_font(fallback_font);
+
+	// One em of the Label3D must equal `size` world units. A DynamicFont's
+	// size is already the em in pixels; a generic Font only exposes its
+	// pixel height, which is close enough for the non-dynamic fallback case.
+	DynamicFont *dynamic_font = Object::cast_to<DynamicFont>(fallback_font.ptr());
+	float em_px = dynamic_font ? (float)dynamic_font->get_size() : fallback_font->get_height();
+	fallback_label->set_pixel_size(em_px > 0.0f ? size / em_px : size);
+}
+
+void SlugLabel3D::_free_fallback_label() {
+	if (!fallback_label) {
+		return;
+	}
+	remove_child(fallback_label);
+	memdelete(fallback_label);
+	fallback_label = nullptr;
+}
+
 void SlugLabel3D::_update_mesh() {
 	pending_update = false;
+
+	bool gles2 = OS::get_singleton()->get_current_video_driver() == OS::VIDEO_DRIVER_GLES2;
+	bool font_ok = font.is_valid() && font->is_valid();
+
+	if (gles2 || !font_ok) {
+		VS::get_singleton()->mesh_clear(mesh);
+		aabb = AABB();
+		VS::get_singleton()->mesh_set_custom_aabb(mesh, aabb);
+
+		if (fallback_font.is_valid()) {
+			WARN_PRINT_ONCE(gles2 ? "SlugLabel3D: GLES2 can't draw Slug text; using fallback_font (Label3D) instead."
+								  : "SlugLabel3D: font is null or invalid; using fallback_font (Label3D) instead.");
+			_update_fallback_label();
+			update_gizmo();
+			return;
+		}
+
+		_free_fallback_label();
+		WARN_PRINT_ONCE(gles2 ? "SlugLabel3D requires GLES3; nothing will be drawn."
+							  : "SlugLabel3D: font is null or invalid; nothing will be drawn.");
+		update_gizmo();
+		return;
+	}
+
+	_free_fallback_label();
 
 	VS::get_singleton()->mesh_clear(mesh);
 	aabb = AABB();
 
-	if (OS::get_singleton()->get_current_video_driver() == OS::VIDEO_DRIVER_GLES2) {
-		WARN_PRINT_ONCE("SlugLabel3D requires GLES3; nothing will be drawn.");
-		VS::get_singleton()->mesh_set_custom_aabb(mesh, aabb);
-		update_gizmo();
-		return;
-	}
-	if (font.is_null() || !font->is_valid() || text.empty()) {
+	if (text.empty()) {
 		VS::get_singleton()->mesh_set_custom_aabb(mesh, aabb);
 		update_gizmo();
 		return;

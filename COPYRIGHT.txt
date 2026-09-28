@@ -70,6 +70,11 @@ Copyright: 2006-2020, assimp team
  2007-2014, Juan Linietsky, Ariel Manzur.
 License: BSD-3-clause
 
+Files: ./modules/slug/slug_shader.h
+Comment: Slug reference shaders
+Copyright: 2017, Eric Lengyel
+License: Expat
+
 Files: ./platform/android/java/lib/aidl/com/android/vending/licensing/
  ./platform/android/java/lib/res/layout/status_bar_ongoing_event_progress_bar.xml
  ./platform/android/java/lib/src/com/google/android/vending/expansion/downloader/

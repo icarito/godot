@@ -7,6 +7,7 @@
 #ifndef SLUG_LABEL_3D_H
 #define SLUG_LABEL_3D_H
 
+#include "scene/3d/label_3d.h"
 #include "scene/3d/visual_instance.h"
 #include "slug_font.h"
 
@@ -28,14 +29,18 @@ private:
 	Align align = ALIGN_CENTER;
 	float line_spacing = 0.0f;
 	bool billboard = false;
+	Ref<Font> fallback_font;
 
 	RID mesh;
 	AABB aabb;
 	bool pending_update = false;
+	Label3D *fallback_label = nullptr;
 
 	void _queue_update();
 	void _update_mesh();
 	void _font_changed();
+	void _update_fallback_label();
+	void _free_fallback_label();
 
 protected:
 	static void _bind_methods();
@@ -61,6 +66,9 @@ public:
 
 	void set_billboard(bool p_billboard);
 	bool get_billboard() const;
+
+	void set_fallback_font(const Ref<Font> &p_font);
+	Ref<Font> get_fallback_font() const;
 
 	virtual AABB get_aabb() const;
 	virtual PoolVector<Face3> get_faces(uint32_t p_usage_flags) const;

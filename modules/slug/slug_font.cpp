@@ -517,21 +517,26 @@ void SlugFont::_ensure_built() {
 	}
 	glyph_img->unlock();
 
-	curve_tex.instance();
-	curve_tex->create_from_image(curve_img, 0);
-	band_tex.instance();
-	band_tex->create_from_image(band_img, 0);
-	glyph_tex.instance();
-	glyph_tex->create_from_image(glyph_img, 0);
+	// The shader and its float textures need GLES3 (texelFetch,
+	// floatBitsToUint, RG32F); under GLES2 the label falls back and creating
+	// them would only log errors. Metrics stay valid for layout.
+	if (OS::get_singleton()->get_current_video_driver() != OS::VIDEO_DRIVER_GLES2) {
+		curve_tex.instance();
+		curve_tex->create_from_image(curve_img, 0);
+		band_tex.instance();
+		band_tex->create_from_image(band_img, 0);
+		glyph_tex.instance();
+		glyph_tex->create_from_image(glyph_img, 0);
 
-	shader.instance();
-	shader->set_code(SLUG_SHADER_CODE);
+		shader.instance();
+		shader->set_code(SLUG_SHADER_CODE);
 
-	material.instance();
-	material->set_shader(shader);
-	material->set_shader_param("curve_tex", curve_tex);
-	material->set_shader_param("band_tex", band_tex);
-	material->set_shader_param("glyph_tex", glyph_tex);
+		material.instance();
+		material->set_shader(shader);
+		material->set_shader_param("curve_tex", curve_tex);
+		material->set_shader_param("band_tex", band_tex);
+		material->set_shader_param("glyph_tex", glyph_tex);
+	}
 
 	valid = true;
 	build_time_usec = (int)(OS::get_singleton()->get_ticks_usec() - start_usec);
