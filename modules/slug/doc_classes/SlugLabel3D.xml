@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="SlugLabel3D" inherits="GeometryInstance" version="3.6" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Displays sharp, resolution-independent text in a 3D world using the Slug algorithm.
+	</brief_description>
+	<description>
+		SlugLabel3D draws text in world space directly from a [SlugFont]'s Bézier glyph outlines, so it stays crisp no matter how large it is on screen or how close the camera gets. This makes it a good choice for signs, billboards, and other large or close-up diegetic text with perspective. It is not meant for dense blocks of small text; use [Label3D] for that instead.
+		[member size] is the world-space size of one em, so a glyph's on-screen size follows [member size] and the camera distance the same way any other 3D object would.
+		SlugLabel3D only works with the GLES3 rendering backend. When running under GLES2, or when [member font] is null or invalid, it falls back to drawing with an internal [Label3D] built from [member fallback_font] if one is set; otherwise nothing is drawn.
+		An outline can be added with [member outline_size] and [member outline_modulate]. Outline pixels outside the glyph cost up to 17 times the fragment work of a plain fill pixel, so keep [member outline_size] no larger than needed. Very thick outlines show small steps at sharp corners. The outline is not drawn in the GLES2/fallback path.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+	</methods>
+	<members>
+		<member name="align" type="int" setter="set_align" getter="get_align" enum="SlugLabel3D.Align" default="1">
+			The horizontal alignment of the text. See [enum Align] for possible values.
+		</member>
+		<member name="billboard" type="bool" setter="set_billboard" getter="get_billboard" default="false">
+			If [code]true[/code], the text always faces the camera, matching the camera's rotation instead of the node's.
+		</member>
+		<member name="fallback_font" type="Font" setter="set_fallback_font" getter="get_fallback_font">
+			The [Font] used to draw text through an internal [Label3D] when Slug rendering is unavailable, either because the video driver is GLES2 or because [member font] is null or invalid. If left empty in that situation, nothing is drawn.
+		</member>
+		<member name="font" type="SlugFont" setter="set_font" getter="get_font">
+			The [SlugFont] used to draw the text. Required for Slug rendering; see [member fallback_font] for what happens when it is missing or invalid.
+		</member>
+		<member name="line_spacing" type="float" setter="set_line_spacing" getter="get_line_spacing" default="0.0">
+			Additional vertical spacing, in world units, added between lines of text.
+		</member>
+		<member name="modulate" type="Color" setter="set_modulate" getter="get_modulate" default="Color( 1, 1, 1, 1 )">
+			The color multiplied onto the text's fill.
+		</member>
+		<member name="outline_modulate" type="Color" setter="set_outline_modulate" getter="get_outline_modulate" default="Color( 0, 0, 0, 1 )">
+			The color of the outline drawn when [member outline_size] is greater than [code]0[/code]. Also forwarded to the [member fallback_font] path's [member Label3D.outline_modulate], though the fallback only shows an outline if [member fallback_font] itself has one configured.
+		</member>
+		<member name="outline_size" type="float" setter="set_outline_size" getter="get_outline_size" default="0.0">
+			The width of the outline drawn around each glyph, in em (fractions of [member size]). A value of [code]0[/code] disables the outline. Not applied when falling back to [member fallback_font].
+		</member>
+		<member name="size" type="float" setter="set_size" getter="get_size" default="1.0">
+			The size, in world units, of one em of text. This is the world-space equivalent of a font's pixel size.
+		</member>
+		<member name="text" type="String" setter="set_text" getter="get_text" default="&quot;&quot;">
+			The text to display. Supports multiple lines separated by [code]\n[/code].
+		</member>
+	</members>
+	<constants>
+		<constant name="ALIGN_LEFT" value="0" enum="Align">
+			Aligns the text to the left.
+		</constant>
+		<constant name="ALIGN_CENTER" value="1" enum="Align">
+			Aligns the text to the center.
+		</constant>
+		<constant name="ALIGN_RIGHT" value="2" enum="Align">
+			Aligns the text to the right.
+		</constant>
+	</constants>
+</class>

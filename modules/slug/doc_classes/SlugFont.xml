@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="SlugFont" inherits="Resource" version="3.6" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		GPU font data for rendering resolution-independent text with the Slug algorithm.
+	</brief_description>
+	<description>
+		SlugFont holds the data [SlugLabel3D] needs to draw text directly from Bézier glyph outlines on the GPU, following Eric Lengyel's Slug algorithm. Unlike a rasterized [DynamicFont], a Slug glyph has no fixed resolution: the same font data stays sharp at any distance or angle, which makes it a good fit for large or close-up world-space text such as signs.
+		SlugFont is built from a [member font_data] [DynamicFontData] pointing at a TrueType file. Only quadratic outlines are supported; CFF/OTF fonts with cubic outlines are rejected and [method is_valid] returns [code]false[/code]. The charset covers ASCII, Latin-1, and the replacement character U+FFFD.
+		The font is not built eagerly: the curve, band, and glyph textures are generated lazily, in a few milliseconds, the first time a [SlugLabel3D] needs them. SlugFont only works with the GLES3 rendering backend.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="get_build_time_usec">
+			<return type="int" />
+			<description>
+				Returns how long the last build of this font's GPU data took, in microseconds. Triggers the build if it hasn't happened yet.
+			</description>
+		</method>
+		<method name="get_glyph_count">
+			<return type="int" />
+			<description>
+				Returns the number of glyphs baked into this font's data. Triggers the build if it hasn't happened yet.
+			</description>
+		</method>
+		<method name="get_max_curves_per_band">
+			<return type="int" />
+			<description>
+				Returns the largest number of curves found in any single band of any glyph, a measure of the worst-case per-pixel cost when rasterizing this font. Triggers the build if it hasn't happened yet.
+			</description>
+		</method>
+		<method name="is_valid">
+			<return type="bool" />
+			<description>
+				Returns [code]true[/code] if [member font_data] is set and was built successfully. Returns [code]false[/code] if [member font_data] is empty, or if the source font has cubic (CFF/OTF) outlines, which Slug does not support.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="font_data" type="DynamicFontData" setter="set_font_data" getter="get_font_data">
+			The TrueType font file this SlugFont's GPU data is built from. Must have quadratic outlines; CFF/OTF fonts with cubic outlines make the font invalid.
+		</member>
+	</members>
+	<constants>
+	</constants>
+</class>

@@ -16,6 +16,8 @@
 //   UV         em-space coordinates of the corner, in the glyph's frame
 //   UV2        (glyph index, em per local unit)
 //   COLOR      linear color
+//   TANGENT.x  outline radius in em; 0 for fill quads. Outline quads come
+//              first in the index buffer so the fill draws over them.
 // glyph_tex, one row per glyph: texel 0 = band scale.xy, band offset.zw;
 // texel 1 = glyph data location in band_tex .xy, band max .zw.
 // curve_tex, band_tex: see slug_font.cpp. Both 4096 texels wide; a glyph's
@@ -30,6 +32,7 @@ uniform sampler2D glyph_tex;
 
 varying flat vec4 v_band;
 varying flat vec4 v_glyph;
+varying flat float v_outline;
 
 void vertex() {
 	if (NORMAL.z > 0.5) {
@@ -40,6 +43,7 @@ void vertex() {
 	int gi = int(UV2.x + 0.5);
 	v_band = texelFetch(glyph_tex, ivec2(0, gi), 0);
 	v_glyph = texelFetch(glyph_tex, ivec2(1, gi), 0);
+	v_outline = TANGENT.x;
 
 	// SlugDilate: push the corner out along its normal so the quad covers
 	// half a pixel more on screen, and move the em coordinate with it.
@@ -106,12 +110,10 @@ vec2 solve_vert_poly(vec4 p12, vec2 p3) {
 	return vec2((a.y * t1 - b.y * 2.0) * t1 + p12.y, (a.y * t2 - b.y * 2.0) * t2 + p12.y);
 }
 
-void fragment() {
-	vec2 rc = UV;
-	vec2 pixels_per_em = 1.0 / fwidth(rc);
-	ivec2 band_max = ivec2(v_glyph.zw);
-	ivec2 band_index = clamp(ivec2(rc * v_band.xy + v_band.zw), ivec2(0), band_max);
-	ivec2 gloc = ivec2(v_glyph.xy);
+float slug_coverage(vec2 rc, vec2 pixels_per_em, vec4 band, vec4 glyph) {
+	ivec2 band_max = ivec2(glyph.zw);
+	ivec2 band_index = clamp(ivec2(rc * band.xy + band.zw), ivec2(0), band_max);
+	ivec2 gloc = ivec2(glyph.xy);
 
 	float xcov = 0.0;
 	float xwgt = 0.0;
@@ -168,7 +170,26 @@ void fragment() {
 
 	// Nonzero fill rule; abs() accepts either winding direction.
 	float coverage = max(abs(xcov * xwgt + ycov * ywgt) / max(xwgt + ywgt, 1.0 / 65536.0), min(abs(xcov), abs(ycov)));
-	coverage = clamp(coverage, 0.0, 1.0);
+	return clamp(coverage, 0.0, 1.0);
+}
+
+
+void fragment() {
+	vec2 pixels_per_em = 1.0 / fwidth(UV);
+	float coverage = slug_coverage(UV, pixels_per_em, v_band, v_glyph);
+	if (v_outline > 0.0 && coverage < 1.0) {
+		// Outline: the glyph dilated by v_outline em, as the max coverage over
+		// the glyph shifted in 16 directions. Where the center is fully covered
+		// the fill hides the outline, so the extra samples are skipped.
+		// ponytail: shifted copies of a sharp corner (e.g. the flat end of the
+		// @ tail) leave steps of ~2% of the radius; invisible at 0.02-0.05 em,
+		// a few pixels on huge outlines. A distance-to-curve pass fixes it.
+		for (int k = 0; k < 16 && coverage < 1.0; k++) {
+			float a = float(k) * 0.392699;
+			vec2 o = vec2(cos(a), sin(a)) * v_outline;
+			coverage = max(coverage, slug_coverage(UV + o, pixels_per_em, v_band, v_glyph));
+		}
+	}
 
 	ALBEDO = COLOR.rgb;
 	ALPHA = COLOR.a * coverage;

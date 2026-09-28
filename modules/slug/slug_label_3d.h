@@ -26,6 +26,8 @@ private:
 	Ref<SlugFont> font;
 	float size = 1.0f;
 	Color modulate = Color(1, 1, 1, 1);
+	float outline_size = 0.0f;
+	Color outline_modulate = Color(0, 0, 0, 1);
 	Align align = ALIGN_CENTER;
 	float line_spacing = 0.0f;
 	bool billboard = false;
@@ -57,6 +59,12 @@ public:
 
 	void set_modulate(const Color &p_color);
 	Color get_modulate() const;
+
+	void set_outline_size(float p_size);
+	float get_outline_size() const;
+
+	void set_outline_modulate(const Color &p_color);
+	Color get_outline_modulate() const;
 
 	void set_align(Align p_align);
 	Align get_align() const;

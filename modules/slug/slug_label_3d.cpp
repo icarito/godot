@@ -24,6 +24,12 @@ void SlugLabel3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_modulate", "modulate"), &SlugLabel3D::set_modulate);
 	ClassDB::bind_method(D_METHOD("get_modulate"), &SlugLabel3D::get_modulate);
 
+	ClassDB::bind_method(D_METHOD("set_outline_size", "size"), &SlugLabel3D::set_outline_size);
+	ClassDB::bind_method(D_METHOD("get_outline_size"), &SlugLabel3D::get_outline_size);
+
+	ClassDB::bind_method(D_METHOD("set_outline_modulate", "modulate"), &SlugLabel3D::set_outline_modulate);
+	ClassDB::bind_method(D_METHOD("get_outline_modulate"), &SlugLabel3D::get_outline_modulate);
+
 	ClassDB::bind_method(D_METHOD("set_align", "align"), &SlugLabel3D::set_align);
 	ClassDB::bind_method(D_METHOD("get_align"), &SlugLabel3D::get_align);
 
@@ -43,6 +49,8 @@ void SlugLabel3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "font", PROPERTY_HINT_RESOURCE_TYPE, "SlugFont"), "set_font", "get_font");
 	ADD_PROPERTY(PropertyInfo(Variant::REAL, "size", PROPERTY_HINT_RANGE, "0.001,1000,0.001"), "set_size", "get_size");
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "modulate"), "set_modulate", "get_modulate");
+	ADD_PROPERTY(PropertyInfo(Variant::REAL, "outline_size", PROPERTY_HINT_RANGE, "0,0.5,0.001"), "set_outline_size", "get_outline_size");
+	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "outline_modulate"), "set_outline_modulate", "get_outline_modulate");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "align", PROPERTY_HINT_ENUM, "Left,Center,Right"), "set_align", "get_align");
 	ADD_PROPERTY(PropertyInfo(Variant::REAL, "line_spacing"), "set_line_spacing", "get_line_spacing");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "billboard"), "set_billboard", "get_billboard");
@@ -117,6 +125,29 @@ Color SlugLabel3D::get_modulate() const {
 	return modulate;
 }
 
+void SlugLabel3D::set_outline_size(float p_size) {
+	ERR_FAIL_COND(p_size < 0.0f);
+	if (outline_size != p_size) {
+		outline_size = p_size;
+		_queue_update();
+	}
+}
+
+float SlugLabel3D::get_outline_size() const {
+	return outline_size;
+}
+
+void SlugLabel3D::set_outline_modulate(const Color &p_color) {
+	if (outline_modulate != p_color) {
+		outline_modulate = p_color;
+		_queue_update();
+	}
+}
+
+Color SlugLabel3D::get_outline_modulate() const {
+	return outline_modulate;
+}
+
 void SlugLabel3D::set_align(Align p_align) {
 	ERR_FAIL_INDEX(p_align, 3);
 	if (align != p_align) {
@@ -185,6 +216,11 @@ void SlugLabel3D::_update_fallback_label() {
 	fallback_label->set_billboard_mode(billboard ? Material3D::BILLBOARD_ENABLED : Material3D::BILLBOARD_DISABLED);
 	fallback_label->set_draw_flag(Label3D::FLAG_DOUBLE_SIDED, true);
 	fallback_label->set_font(fallback_font);
+	// The outline needs the fallback font's own outline_size set, which would
+	// mutate a resource the caller may share elsewhere; the fallback path
+	// draws fill only. outline_modulate is still forwarded so it takes effect
+	// if the caller's font already carries an outline.
+	fallback_label->set_outline_modulate(outline_modulate);
 
 	// One em of the Label3D must equal `size` world units. A DynamicFont's
 	// size is already the em in pixels; a generic Font only exposes its
@@ -286,9 +322,15 @@ void SlugLabel3D::_update_mesh() {
 	PoolVector2Array uvs;
 	PoolVector2Array uv2s;
 	PoolColorArray colors;
-	PoolIntArray indices;
+	PoolRealArray tangents;
+	// Outline quads must precede fill quads in the index buffer so the fill
+	// draws over the outline within the single draw call; built as two lists
+	// and concatenated once all glyphs are laid out.
+	PoolIntArray fill_indices;
+	PoolIntArray outline_indices;
 
 	Color linear_modulate = modulate.to_linear();
+	Color linear_outline_modulate = outline_modulate.to_linear();
 	float billboard_flag = billboard ? 1.0f : 0.0f;
 	bool has_point = false;
 
@@ -319,17 +361,55 @@ void SlugLabel3D::_update_mesh() {
 				continue;
 			}
 			if (g->has_outline) {
-				Vector2 corners[4] = {
-					Vector2(g->bounds.position.x, g->bounds.position.y),
-					Vector2(g->bounds.position.x + g->bounds.size.x, g->bounds.position.y),
-					Vector2(g->bounds.position.x + g->bounds.size.x, g->bounds.position.y + g->bounds.size.y),
-					Vector2(g->bounds.position.x, g->bounds.position.y + g->bounds.size.y),
-				};
 				Vector2 normal_dirs[4] = {
 					Vector2(-1, -1),
 					Vector2(1, -1),
 					Vector2(1, 1),
 					Vector2(-1, 1),
+				};
+
+				if (outline_size > 0.0f) {
+					Rect2 grown = g->bounds.grow(outline_size);
+					Vector2 outline_corners[4] = {
+						Vector2(grown.position.x, grown.position.y),
+						Vector2(grown.position.x + grown.size.x, grown.position.y),
+						Vector2(grown.position.x + grown.size.x, grown.position.y + grown.size.y),
+						Vector2(grown.position.x, grown.position.y + grown.size.y),
+					};
+
+					int base = vertices.size();
+					for (int ci = 0; ci < 4; ci++) {
+						Vector3 v((x + outline_corners[ci].x) * size, (y + outline_corners[ci].y) * size, 0.0f);
+						vertices.push_back(v);
+						normals.push_back(Vector3(normal_dirs[ci].x, normal_dirs[ci].y, billboard_flag));
+						uvs.push_back(outline_corners[ci]);
+						uv2s.push_back(Vector2((float)g->index, 1.0f / size));
+						colors.push_back(linear_outline_modulate);
+						tangents.push_back(outline_size);
+						tangents.push_back(0.0f);
+						tangents.push_back(0.0f);
+						tangents.push_back(1.0f);
+
+						if (!has_point) {
+							aabb.position = v;
+							has_point = true;
+						} else {
+							aabb.expand_to(v);
+						}
+					}
+					outline_indices.push_back(base + 0);
+					outline_indices.push_back(base + 1);
+					outline_indices.push_back(base + 2);
+					outline_indices.push_back(base + 0);
+					outline_indices.push_back(base + 2);
+					outline_indices.push_back(base + 3);
+				}
+
+				Vector2 corners[4] = {
+					Vector2(g->bounds.position.x, g->bounds.position.y),
+					Vector2(g->bounds.position.x + g->bounds.size.x, g->bounds.position.y),
+					Vector2(g->bounds.position.x + g->bounds.size.x, g->bounds.position.y + g->bounds.size.y),
+					Vector2(g->bounds.position.x, g->bounds.position.y + g->bounds.size.y),
 				};
 
 				int base = vertices.size();
@@ -340,6 +420,10 @@ void SlugLabel3D::_update_mesh() {
 					uvs.push_back(corners[ci]);
 					uv2s.push_back(Vector2((float)g->index, 1.0f / size));
 					colors.push_back(linear_modulate);
+					tangents.push_back(0.0f);
+					tangents.push_back(0.0f);
+					tangents.push_back(0.0f);
+					tangents.push_back(1.0f);
 
 					if (!has_point) {
 						aabb.position = v;
@@ -348,12 +432,12 @@ void SlugLabel3D::_update_mesh() {
 						aabb.expand_to(v);
 					}
 				}
-				indices.push_back(base + 0);
-				indices.push_back(base + 1);
-				indices.push_back(base + 2);
-				indices.push_back(base + 0);
-				indices.push_back(base + 2);
-				indices.push_back(base + 3);
+				fill_indices.push_back(base + 0);
+				fill_indices.push_back(base + 1);
+				fill_indices.push_back(base + 2);
+				fill_indices.push_back(base + 0);
+				fill_indices.push_back(base + 2);
+				fill_indices.push_back(base + 3);
 			}
 			x += g->advance;
 		}
@@ -378,6 +462,11 @@ void SlugLabel3D::_update_mesh() {
 		aabb = AABB(Vector3(-r, -r, -r), Vector3(2.0f * r, 2.0f * r, 2.0f * r));
 	}
 
+	// Outline quads first so the fill draws over them within the one surface.
+	PoolIntArray indices;
+	indices.append_array(outline_indices);
+	indices.append_array(fill_indices);
+
 	Array arrays;
 	arrays.resize(VS::ARRAY_MAX);
 	arrays[VS::ARRAY_VERTEX] = vertices;
@@ -385,6 +474,7 @@ void SlugLabel3D::_update_mesh() {
 	arrays[VS::ARRAY_COLOR] = colors;
 	arrays[VS::ARRAY_TEX_UV] = uvs;
 	arrays[VS::ARRAY_TEX_UV2] = uv2s;
+	arrays[VS::ARRAY_TANGENT] = tangents;
 	arrays[VS::ARRAY_INDEX] = indices;
 
 	VS::get_singleton()->mesh_add_surface_from_arrays(mesh, VS::PRIMITIVE_TRIANGLES, arrays, Array(), 0);
