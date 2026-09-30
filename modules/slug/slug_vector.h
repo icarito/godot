@@ -31,9 +31,14 @@ class SlugVector : public Resource {
 	bool fill_custom = false;
 	bool stroke_custom = false;
 	SlugAtlasData atlas;
+	Ref<ImageTexture> paint_tex;
+	Ref<ImageTexture> gradient_tex;
 
 	void _ensure_built();
 	void _clear_built();
+	void _build_paint_texture();
+	void _update_gradient_texture();
+	Color _gradient_sample(int p_gradient, float p_t) const;
 
 protected:
 	static void _bind_methods();

@@ -27,7 +27,9 @@ struct SlugAtlasData {
 class SlugShapeBuilder {
 public:
 	// Shape i lives in glyph_tex row i, so callers keep their own index map.
-	static SlugAtlasData build(const Vector<SlugShape> &p_shapes);
+	// p_shader_code selects the material shader (label by default, or the
+	// vector shader with gradients).
+	static SlugAtlasData build(const Vector<SlugShape> &p_shapes, const String &p_shader_code = String());
 };
 
 #endif // SLUG_SHAPE_BUILDER_H

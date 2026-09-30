@@ -6,7 +6,7 @@
 	<description>
 		SlugVector parses an SVG document into filled regions and packs their Bézier outlines into the same GPU atlas used for text, so [SlugVector3D] can draw them resolution-independently with the Slug algorithm. Each shape element with a solid fill becomes one region; its subpaths (including holes) stay together, so non-zero winding cancels them as authored. Stroked elements are drawn too: the stroke is converted to a filled outline (round/miter/bevel joins, butt/round/square caps), so strokes keep the resolution-independent anti-aliasing of fills.
 		Sugar-style color roles are recognized: the [code]&amp;fill_color;[/code] / [code]&amp;stroke_color;[/code] XML entities and the [code]--fill-color[/code] / [code]--stroke-color[/code] CSS variables mark paints that the host can recolor at runtime through [member fill_color] and [member stroke_color], without rebuilding the geometry.
-		Parsing is done with NanoSVG, which bakes element and group transforms into the points. Y is flipped so the result is y-up, matching the rest of the pipeline. Gradients and the even-odd fill rule are not supported yet.
+		Parsing is done with NanoSVG, which bakes element and group transforms into the points. Y is flipped so the result is y-up, matching the rest of the pipeline. Solid paints and linear/radial gradients are supported (the gradient renderer evaluates the gradient per fragment from a pre-sampled ramp); radial focal points are not. The non-zero and even-odd fill rules are both supported.
 		The data is not built eagerly: parsing and atlas packing happen lazily, the first time a [SlugVector3D] needs them.
 	</description>
 	<tutorials>

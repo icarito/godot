@@ -6,7 +6,8 @@
 /* and bakes every element/group transform into the points.             */
 /* Sugar-style color roles (fill_color / stroke_color entities or the   */
 /* --fill-color / --stroke-color CSS variables) are resolved to roles   */
-/* so the host can recolor them at runtime.                             */
+/* so the host can recolor them at runtime. Solid paints and linear/    */
+/* radial gradients are supported.                                      */
 /*************************************************************************/
 
 #ifndef SLUG_SVG_H
@@ -18,21 +19,42 @@
 #include "core/vector.h"
 #include "slug_shape.h"
 
-// Where a shape's color comes from.
+// Where a shape's (or gradient stop's) color comes from.
 enum SlugPaintRole {
 	SLUG_PAINT_LITERAL = 0, // A color authored in the SVG.
 	SLUG_PAINT_FILL = 1, // The Sugar fill_color role.
 	SLUG_PAINT_STROKE = 2, // The Sugar stroke_color role.
 };
 
-struct SlugPaint {
+struct SlugGradientStop {
+	float offset = 0.0f;
 	int role = SLUG_PAINT_LITERAL;
 	Color color; // Valid when role == SLUG_PAINT_LITERAL.
+};
+
+// A linear (kind 1) or radial (kind 2) gradient, already in normalized, y-up
+// shape space. `m`/`t` are the affine that maps a shape-space point into the
+// gradient's local space (NanoSVG bakes the inverse basis there); the local
+// point's `.y` is the linear parameter and its length is the radial one.
+struct SlugGradientDef {
+	int kind = 1;
+	int spread = 0; // 0 pad, 1 reflect, 2 repeat
+	float m[4] = { 1.0f, 0.0f, 0.0f, 1.0f }; // row-major m00, m01, m10, m11
+	float t[2] = { 0.0f, 0.0f }; // translation
+	Vector<SlugGradientStop> stops;
+};
+
+struct SlugPaint {
+	int role = SLUG_PAINT_LITERAL; // For solid paints.
+	Color color; // Valid for solid literal paints.
+	int gradient = -1; // Index into SlugSvgData::gradients, or -1.
+	int fill_rule = 0; // 0 non-zero, 1 even-odd.
 };
 
 struct SlugSvgData {
 	Vector<SlugShape> shapes;
 	Vector<SlugPaint> paints;
+	Vector<SlugGradientDef> gradients;
 	Rect2 bounds;
 	// Defaults declared by the SVG (entity value or var() fallback).
 	Color default_fill = Color(1, 1, 1, 1);

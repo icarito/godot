@@ -6,13 +6,15 @@
 /* SlugShape contours via SlugCurveDecomposer, plus stroke-to-fill for  */
 /* stroked elements. Sugar color roles are detected by sentinel colors  */
 /* substituted for &fill_color;/&stroke_color; and var(--fill-color)/   */
-/* var(--stroke-color).                                                 */
+/* var(--stroke-color). Solid paints and linear/radial gradients are    */
+/* supported; gradients are exported as (inverse basis, center, stops). */
 /*************************************************************************/
 
 #include "slug_svg.h"
 
 #include <string.h>
 
+#include "core/math/math_funcs.h"
 #include "core/print_string.h"
 #include "slug_decomposer.h"
 #include "slug_stroke.h"
@@ -58,6 +60,16 @@ static Color _slug_svg_color(unsigned int p_abgr, float p_opacity) {
 	float b = ((p_abgr >> 16) & 0xff) / 255.0f;
 	float a = (((p_abgr >> 24) & 0xff) / 255.0f) * p_opacity;
 	return Color(r, g, b, a);
+}
+
+static int _slug_svg_role(unsigned int p_abgr) {
+	if ((p_abgr & 0xFFFFFFu) == (SLUG_SVG_FILL_SENTINEL & 0xFFFFFFu)) {
+		return SLUG_PAINT_FILL;
+	}
+	if ((p_abgr & 0xFFFFFFu) == (SLUG_SVG_STROKE_SENTINEL & 0xFFFFFFu)) {
+		return SLUG_PAINT_STROKE;
+	}
+	return SLUG_PAINT_LITERAL;
 }
 
 static int _slug_hex_nibble(CharType c) {
@@ -161,6 +173,79 @@ static String _slug_svg_strip_doctype(const String &p_text) {
 	return p_text.substr(0, start) + p_text.substr(end + skip);
 }
 
+// Copies a NanoSVG gradient into a SlugGradientDef in normalized, y-up space,
+// deduplicating by the source pointer.
+static int _slug_svg_gradient(NSVGgradient *p_g, int p_type, float p_norm,
+		Vector<SlugGradientDef> &r_defs, Vector<NSVGgradient *> &r_ptrs) {
+	for (int i = 0; i < r_ptrs.size(); i++) {
+		if (r_ptrs[i] == p_g) {
+			return i;
+		}
+	}
+
+	SlugGradientDef def;
+	def.kind = (p_type == NSVG_PAINT_LINEAR_GRADIENT) ? 1 : 2;
+	def.spread = p_g->spread;
+	// NanoSVG stores the affine that maps a user point into the gradient's
+	// local space. Compose it with S^-1 (our normalization + y flip): a shape
+	// point p' corresponds to user p = (p'.x / norm, -p'.y / norm).
+	float a = p_g->xform[0];
+	float b = p_g->xform[1];
+	float c = p_g->xform[2];
+	float d = p_g->xform[3];
+	def.m[0] = a / p_norm; // m00
+	def.m[1] = -c / p_norm; // m01
+	def.m[2] = b / p_norm; // m10
+	def.m[3] = -d / p_norm; // m11
+	def.t[0] = p_g->xform[4];
+	def.t[1] = p_g->xform[5];
+
+	for (int i = 0; i < p_g->nstops; i++) {
+		SlugGradientStop stop;
+		stop.offset = p_g->stops[i].offset;
+		stop.role = _slug_svg_role(p_g->stops[i].color);
+		if (stop.role == SLUG_PAINT_LITERAL) {
+			stop.color = _slug_svg_color(p_g->stops[i].color, 1.0f);
+		}
+		def.stops.push_back(stop);
+	}
+	// NanoSVG inserts stops sorted, but keep it robust.
+	for (int i = 1; i < def.stops.size(); i++) {
+		SlugGradientStop s = def.stops[i];
+		int j = i - 1;
+		while (j >= 0 && def.stops[j].offset > s.offset) {
+			def.stops.write[j + 1] = def.stops[j];
+			j--;
+		}
+		def.stops.write[j + 1] = s;
+	}
+
+	r_defs.push_back(def);
+	r_ptrs.push_back(p_g);
+	return r_defs.size() - 1;
+}
+
+static bool _slug_svg_make_paint(const NSVGpaint &p_paint, float p_opacity, float p_norm, int p_fill_rule,
+		Vector<SlugGradientDef> &r_defs, Vector<NSVGgradient *> &r_ptrs, SlugPaint &r_paint) {
+	if (p_paint.type == NSVG_PAINT_COLOR) {
+		r_paint.role = _slug_svg_role(p_paint.color);
+		if (r_paint.role == SLUG_PAINT_LITERAL) {
+			r_paint.color = _slug_svg_color(p_paint.color, p_opacity);
+		}
+		r_paint.fill_rule = p_fill_rule;
+		return true;
+	}
+	if (p_paint.type == NSVG_PAINT_LINEAR_GRADIENT || p_paint.type == NSVG_PAINT_RADIAL_GRADIENT) {
+		if (p_paint.gradient == nullptr) {
+			return false;
+		}
+		r_paint.gradient = _slug_svg_gradient(p_paint.gradient, p_paint.type, p_norm, r_defs, r_ptrs);
+		r_paint.fill_rule = p_fill_rule;
+		return true;
+	}
+	return false;
+}
+
 bool slug_parse_svg(const Vector<uint8_t> &p_bytes, SlugSvgData &r_data, String &r_error) {
 	r_data = SlugSvgData();
 	r_error = String();
@@ -201,8 +286,6 @@ bool slug_parse_svg(const Vector<uint8_t> &p_bytes, SlugSvgData &r_data, String 
 
 	r_data.default_fill = def_fill;
 	r_data.default_stroke = def_stroke;
-	r_data.has_fill_role = ent_fill || var_fill;
-	r_data.has_stroke_role = ent_stroke || var_stroke;
 
 	CharString cs = text.utf8();
 	Vector<uint8_t> buffer;
@@ -221,35 +304,20 @@ bool slug_parse_svg(const Vector<uint8_t> &p_bytes, SlugSvgData &r_data, String 
 	float extent = MAX(image->width, image->height);
 	float norm = extent > 0.0f ? 1.0f / extent : 1.0f;
 
+	Vector<NSVGgradient *> grad_ptrs;
+
 	bool first = true;
 	for (NSVGshape *ns = image->shapes; ns != nullptr; ns = ns->next) {
 		if (!(ns->flags & NSVG_FLAGS_VISIBLE)) {
 			continue;
 		}
 
-		int fill_role = -1;
-		Color fill_literal;
-		if (ns->fill.type == NSVG_PAINT_COLOR) {
-			if ((ns->fill.color & 0xFFFFFFu) == (SLUG_SVG_FILL_SENTINEL & 0xFFFFFFu)) {
-				fill_role = SLUG_PAINT_FILL;
-			} else {
-				fill_role = SLUG_PAINT_LITERAL;
-				fill_literal = _slug_svg_color(ns->fill.color, ns->opacity);
-			}
-		}
+		SlugPaint fill_paint;
+		bool fill_active = _slug_svg_make_paint(ns->fill, ns->opacity, norm, ns->fillRule, r_data.gradients, grad_ptrs, fill_paint);
+		SlugPaint stroke_paint;
+		bool stroke_active = ns->strokeWidth > 0.0f && _slug_svg_make_paint(ns->stroke, ns->opacity, norm, 0, r_data.gradients, grad_ptrs, stroke_paint);
 
-		int stroke_role = -1;
-		Color stroke_literal;
-		if (ns->stroke.type == NSVG_PAINT_COLOR && ns->strokeWidth > 0.0f) {
-			if ((ns->stroke.color & 0xFFFFFFu) == (SLUG_SVG_STROKE_SENTINEL & 0xFFFFFFu)) {
-				stroke_role = SLUG_PAINT_STROKE;
-			} else {
-				stroke_role = SLUG_PAINT_LITERAL;
-				stroke_literal = _slug_svg_color(ns->stroke.color, ns->opacity);
-			}
-		}
-
-		if ((fill_role < 0 && stroke_role < 0) || ns->paths == nullptr) {
+		if ((!fill_active && !stroke_active) || ns->paths == nullptr) {
 			continue;
 		}
 
@@ -300,17 +368,14 @@ bool slug_parse_svg(const Vector<uint8_t> &p_bytes, SlugSvgData &r_data, String 
 
 		// Fill first, stroke on top: SVG paints fill, then stroke.
 		SlugShape fill_shape = dec.get_shape();
-		if (fill_role >= 0 && fill_shape.has_curves()) {
+		if (fill_active && fill_shape.has_curves()) {
 			Rect2 b = fill_shape.compute_bounds();
 			r_data.shapes.push_back(fill_shape);
-			SlugPaint paint;
-			paint.role = fill_role;
-			paint.color = fill_literal;
-			r_data.paints.push_back(paint);
+			r_data.paints.push_back(fill_paint);
 			r_data.bounds = first ? b : r_data.bounds.merge(b);
 			first = false;
 		}
-		if (stroke_role >= 0) {
+		if (stroke_active) {
 			SlugShape stroke_shape;
 			for (int li = 0; li < polylines.size(); li++) {
 				slug_build_stroke(polylines[li], poly_closed[li], width, ns->strokeLineJoin, ns->strokeLineCap, ns->miterLimit, stroke_shape.contours);
@@ -318,10 +383,7 @@ bool slug_parse_svg(const Vector<uint8_t> &p_bytes, SlugSvgData &r_data, String 
 			if (stroke_shape.has_curves()) {
 				Rect2 b = stroke_shape.compute_bounds();
 				r_data.shapes.push_back(stroke_shape);
-				SlugPaint paint;
-				paint.role = stroke_role;
-				paint.color = stroke_literal;
-				r_data.paints.push_back(paint);
+				r_data.paints.push_back(stroke_paint);
 				r_data.bounds = first ? b : r_data.bounds.merge(b);
 				first = false;
 			}
@@ -333,6 +395,21 @@ bool slug_parse_svg(const Vector<uint8_t> &p_bytes, SlugSvgData &r_data, String 
 		r_error = "no visible solid-filled paths";
 		return false;
 	}
+
+	bool stop_fill = false;
+	bool stop_stroke = false;
+	for (int gi = 0; gi < r_data.gradients.size(); gi++) {
+		for (int si = 0; si < r_data.gradients[gi].stops.size(); si++) {
+			if (r_data.gradients[gi].stops[si].role == SLUG_PAINT_FILL) {
+				stop_fill = true;
+			} else if (r_data.gradients[gi].stops[si].role == SLUG_PAINT_STROKE) {
+				stop_stroke = true;
+			}
+		}
+	}
+	r_data.has_fill_role = ent_fill || var_fill || stop_fill;
+	r_data.has_stroke_role = ent_stroke || var_stroke || stop_stroke;
+
 	if (r_data.bounds.size.x <= 0.0f) {
 		r_data.bounds.size.x = 1.0f;
 	}

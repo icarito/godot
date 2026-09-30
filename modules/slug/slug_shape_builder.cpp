@@ -55,7 +55,7 @@ static int _slug_max_band_count(const Vector<SlugCurveRef> &p_list, float p_lo, 
 	return max_count;
 }
 
-SlugAtlasData SlugShapeBuilder::build(const Vector<SlugShape> &p_shapes) {
+SlugAtlasData SlugShapeBuilder::build(const Vector<SlugShape> &p_shapes, const String &p_shader_code) {
 	SlugAtlasData out;
 	int count = p_shapes.size();
 
@@ -294,7 +294,7 @@ SlugAtlasData SlugShapeBuilder::build(const Vector<SlugShape> &p_shapes) {
 	if (slug_backend_supports_float_textures()) {
 		Ref<Shader> shader;
 		shader.instance();
-		shader->set_code(SLUG_SHADER_CODE);
+		shader->set_code(p_shader_code.empty() ? slug_label_shader_code() : p_shader_code);
 
 		out.curve_tex.instance();
 		out.curve_tex->create_from_image(curve_img, 0);
