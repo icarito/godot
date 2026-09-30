@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="SlugVector3D" inherits="GeometryInstance" version="3.6" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Draws a [SlugVector] (an SVG) in a 3D world with the Slug algorithm.
+	</brief_description>
+	<description>
+		SlugVector3D draws the filled regions of a [SlugVector] directly from their Bézier outlines, so the image stays crisp at any distance, scale or angle. This makes it a good fit for diegetic HUDs, icons and signage. Each region keeps the fill color authored in the SVG, multiplied by [member modulate].
+		[member size] is the world-space height of the vector's bounding box, so the drawing scales to fit that height and its width follows the aspect ratio.
+		SlugVector3D only works with the GLES3 rendering backend; under GLES2 or with a null/invalid [member vector], nothing is drawn.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+	</methods>
+	<members>
+		<member name="billboard" type="bool" setter="set_billboard" getter="get_billboard" default="false">
+			If [code]true[/code], the vector always faces the camera, matching the camera's rotation instead of the node's.
+		</member>
+		<member name="modulate" type="Color" setter="set_modulate" getter="get_modulate" default="Color( 1, 1, 1, 1 )">
+			The color multiplied onto every region's authored fill color.
+		</member>
+		<member name="size" type="float" setter="set_size" getter="get_size" default="1.0">
+			The world-space height of the vector's bounding box. The width is derived from the SVG's aspect ratio.
+		</member>
+		<member name="vector" type="SlugVector" setter="set_vector" getter="get_vector">
+			The [SlugVector] to draw.
+		</member>
+	</members>
+	<constants>
+	</constants>
+</class>

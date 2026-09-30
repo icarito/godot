@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="SlugVector" inherits="Resource" version="3.6" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		GPU vector data parsed from an SVG file, for use with [SlugVector3D].
+	</brief_description>
+	<description>
+		SlugVector parses an SVG document into filled regions and packs their Bézier outlines into the same GPU atlas used for text, so [SlugVector3D] can draw them resolution-independently with the Slug algorithm. Each shape element with a solid fill becomes one region; its subpaths (including holes) stay together, so non-zero winding cancels them as authored.
+		Parsing is done with NanoSVG, which bakes element and group transforms into the points. Y is flipped so the result is y-up, matching the rest of the pipeline. Gradients, strokes and the even-odd fill rule are not supported yet: such elements are skipped (or would render as if non-zero).
+		The data is not built eagerly: parsing and atlas packing happen lazily, the first time a [SlugVector3D] needs them.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="get_bounds">
+			<return type="Rect2" />
+			<description>
+				Returns the bounding box of all parsed shapes, in SVG user units (y-up). Triggers the build if it hasn't happened yet.
+			</description>
+		</method>
+		<method name="get_build_time_usec">
+			<return type="int" />
+			<description>
+				Returns how long the last parse and build of this vector's GPU data took, in microseconds. Triggers the build if it hasn't happened yet.
+			</description>
+		</method>
+		<method name="get_max_curves_per_band">
+			<return type="int" />
+			<description>
+				Returns the largest number of curves found in any single band of any shape, a measure of the worst-case per-pixel cost when rasterizing this vector. Triggers the build if it hasn't happened yet.
+			</description>
+		</method>
+		<method name="get_shape_count">
+			<return type="int" />
+			<description>
+				Returns the number of filled regions parsed from the SVG. Triggers the build if it hasn't happened yet.
+			</description>
+		</method>
+		<method name="is_valid">
+			<return type="bool" />
+			<description>
+				Returns [code]true[/code] if the SVG was read and parsed into at least one visible solid-filled region. Triggers the build if it hasn't happened yet.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="svg_path" type="String" setter="set_svg_path" getter="get_svg_path" default="&quot;&quot;">
+			Path to the SVG file to parse, for example [code]res://icon.svg[/code].
+		</member>
+	</members>
+	<constants>
+	</constants>
+</class>

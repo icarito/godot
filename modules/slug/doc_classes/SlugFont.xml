@@ -5,7 +5,7 @@
 	</brief_description>
 	<description>
 		SlugFont holds the data [SlugLabel3D] needs to draw text directly from Bézier glyph outlines on the GPU, following Eric Lengyel's Slug algorithm. Unlike a rasterized [DynamicFont], a Slug glyph has no fixed resolution: the same font data stays sharp at any distance or angle, which makes it a good fit for large or close-up world-space text such as signs.
-		SlugFont is built from a [member font_data] [DynamicFontData] pointing at a TrueType file. Only quadratic outlines are supported; CFF/OTF fonts with cubic outlines are rejected and [method is_valid] returns [code]false[/code]. The charset covers ASCII, Latin-1, and the replacement character U+FFFD.
+		SlugFont is built from a [member font_data] [DynamicFontData]. Both quadratic (TrueType) and cubic (CFF/OTF) outlines are supported: cubic curves are split into quadratics adaptively when the font is built. The charset covers ASCII, Latin-1, and the replacement character U+FFFD.
 		The font is not built eagerly: the curve, band, and glyph textures are generated lazily, in a few milliseconds, the first time a [SlugLabel3D] needs them. SlugFont only works with the GLES3 rendering backend.
 	</description>
 	<tutorials>
