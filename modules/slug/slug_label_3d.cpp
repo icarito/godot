@@ -10,6 +10,7 @@
 #include "core/os/os.h"
 #include "scene/resources/dynamic_font.h"
 #include "servers/visual_server.h"
+#include "slug_backend.h"
 
 void SlugLabel3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_text", "text"), &SlugLabel3D::set_text);
@@ -242,25 +243,25 @@ void SlugLabel3D::_free_fallback_label() {
 void SlugLabel3D::_update_mesh() {
 	pending_update = false;
 
-	bool gles2 = OS::get_singleton()->get_current_video_driver() == OS::VIDEO_DRIVER_GLES2;
+	bool backend_ok = slug_backend_supports_float_textures();
 	bool font_ok = font.is_valid() && font->is_valid();
 
-	if (gles2 || !font_ok) {
+	if (!backend_ok || !font_ok) {
 		VS::get_singleton()->mesh_clear(mesh);
 		aabb = AABB();
 		VS::get_singleton()->mesh_set_custom_aabb(mesh, aabb);
 
 		if (fallback_font.is_valid()) {
-			WARN_PRINT_ONCE(gles2 ? "SlugLabel3D: GLES2 can't draw Slug text; using fallback_font (Label3D) instead."
-								  : "SlugLabel3D: font is null or invalid; using fallback_font (Label3D) instead.");
+			WARN_PRINT_ONCE(!backend_ok ? "SlugLabel3D: the active renderer has no GLES3 features (texelFetch/float textures); using fallback_font (Label3D) instead."
+										: "SlugLabel3D: font is null or invalid; using fallback_font (Label3D) instead.");
 			_update_fallback_label();
 			update_gizmo();
 			return;
 		}
 
 		_free_fallback_label();
-		WARN_PRINT_ONCE(gles2 ? "SlugLabel3D requires GLES3; nothing will be drawn."
-							  : "SlugLabel3D: font is null or invalid; nothing will be drawn.");
+		WARN_PRINT_ONCE(!backend_ok ? "SlugLabel3D requires a GLES3 renderer; nothing will be drawn."
+									: "SlugLabel3D: font is null or invalid; nothing will be drawn.");
 		update_gizmo();
 		return;
 	}

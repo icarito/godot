@@ -9,6 +9,7 @@
 #include "core/os/file_access.h"
 #include "core/os/os.h"
 #include "core/print_string.h"
+#include "slug_backend.h"
 #include "slug_shader.h"
 
 #include <ft2build.h>
@@ -517,10 +518,12 @@ void SlugFont::_ensure_built() {
 	}
 	glyph_img->unlock();
 
-	// The shader and its float textures need GLES3 (texelFetch,
-	// floatBitsToUint, RG32F); under GLES2 the label falls back and creating
-	// them would only log errors. Metrics stay valid for layout.
-	if (OS::get_singleton()->get_current_video_driver() != OS::VIDEO_DRIVER_GLES2) {
+	// El shader y sus texturas float exigen un backend GLES3 (texelFetch,
+	// floatBitsToUint, RG32F); con GLES2 o el dummy el label cae al fallback
+	// y crear los recursos solo dejaria errores en el log. Las metricas
+	// siguen siendo validas para el layout. Se decide por capacidad real del
+	// backend, no por OS::get_current_video_driver().
+	if (slug_backend_supports_float_textures()) {
 		curve_tex.instance();
 		curve_tex->create_from_image(curve_img, 0);
 		band_tex.instance();
