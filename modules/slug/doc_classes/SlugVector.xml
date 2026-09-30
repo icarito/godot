@@ -4,8 +4,9 @@
 		GPU vector data parsed from an SVG file, for use with [SlugVector3D].
 	</brief_description>
 	<description>
-		SlugVector parses an SVG document into filled regions and packs their Bézier outlines into the same GPU atlas used for text, so [SlugVector3D] can draw them resolution-independently with the Slug algorithm. Each shape element with a solid fill becomes one region; its subpaths (including holes) stay together, so non-zero winding cancels them as authored.
-		Parsing is done with NanoSVG, which bakes element and group transforms into the points. Y is flipped so the result is y-up, matching the rest of the pipeline. Gradients, strokes and the even-odd fill rule are not supported yet: such elements are skipped (or would render as if non-zero).
+		SlugVector parses an SVG document into filled regions and packs their Bézier outlines into the same GPU atlas used for text, so [SlugVector3D] can draw them resolution-independently with the Slug algorithm. Each shape element with a solid fill becomes one region; its subpaths (including holes) stay together, so non-zero winding cancels them as authored. Stroked elements are drawn too: the stroke is converted to a filled outline (round/miter/bevel joins, butt/round/square caps), so strokes keep the resolution-independent anti-aliasing of fills.
+		Sugar-style color roles are recognized: the [code]&amp;fill_color;[/code] / [code]&amp;stroke_color;[/code] XML entities and the [code]--fill-color[/code] / [code]--stroke-color[/code] CSS variables mark paints that the host can recolor at runtime through [member fill_color] and [member stroke_color], without rebuilding the geometry.
+		Parsing is done with NanoSVG, which bakes element and group transforms into the points. Y is flipped so the result is y-up, matching the rest of the pipeline. Gradients and the even-odd fill rule are not supported yet.
 		The data is not built eagerly: parsing and atlas packing happen lazily, the first time a [SlugVector3D] needs them.
 	</description>
 	<tutorials>
@@ -43,6 +44,12 @@
 		</method>
 	</methods>
 	<members>
+		<member name="fill_color" type="Color" setter="set_fill_color" getter="get_fill_color" default="Color( 1, 1, 1, 1 )">
+			The color used for every region whose paint is the Sugar [code]fill_color[/code] role. Changing it recolors those regions without rebuilding the geometry.
+		</member>
+		<member name="stroke_color" type="Color" setter="set_stroke_color" getter="get_stroke_color" default="Color( 0, 0, 0, 1 )">
+			The color used for every region whose paint is the Sugar [code]stroke_color[/code] role. Changing it recolors those regions without rebuilding the geometry.
+		</member>
 		<member name="svg_path" type="String" setter="set_svg_path" getter="get_svg_path" default="&quot;&quot;">
 			Path to the SVG file to parse, for example [code]res://icon.svg[/code].
 		</member>

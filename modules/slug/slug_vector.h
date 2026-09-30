@@ -4,6 +4,7 @@
 /* Godot 3.6 module: modules/slug                                       */
 /* A set of filled regions parsed from an SVG, packed into the Slug     */
 /* atlas textures by SlugShapeBuilder. Consumed by SlugVector3D.        */
+/* Sugar-style fill/stroke color roles can be recolored at runtime.     */
 /*************************************************************************/
 
 #ifndef SLUG_VECTOR_H
@@ -13,6 +14,7 @@
 #include "core/math/rect2.h"
 #include "core/resource.h"
 #include "slug_shape_builder.h"
+#include "slug_svg.h"
 
 class SlugVector : public Resource {
 	GDCLASS(SlugVector, Resource);
@@ -22,10 +24,12 @@ class SlugVector : public Resource {
 	bool built = false;
 	bool valid = false;
 	int build_time_usec = 0;
-	Rect2 bounds;
 
-	Vector<SlugShape> shapes;
-	Vector<Color> colors;
+	SlugSvgData svg;
+	Color fill_color = Color(1, 1, 1, 1);
+	Color stroke_color = Color(0, 0, 0, 1);
+	bool fill_custom = false;
+	bool stroke_custom = false;
 	SlugAtlasData atlas;
 
 	void _ensure_built();
@@ -37,6 +41,11 @@ protected:
 public:
 	void set_svg_path(const String &p_path);
 	String get_svg_path() const;
+
+	void set_fill_color(const Color &p_color);
+	Color get_fill_color() const;
+	void set_stroke_color(const Color &p_color);
+	Color get_stroke_color() const;
 
 	bool is_valid();
 	int get_shape_count();
