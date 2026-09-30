@@ -57,6 +57,7 @@ void SlugVector::set_fill_color(const Color &p_color) {
 	}
 	fill_color = p_color;
 	fill_custom = true;
+	_build_paint_texture();
 	_update_gradient_texture();
 	emit_changed(); // Only the colors change, not the geometry: no rebuild needed.
 }
@@ -71,6 +72,7 @@ void SlugVector::set_stroke_color(const Color &p_color) {
 	}
 	stroke_color = p_color;
 	stroke_custom = true;
+	_build_paint_texture();
 	_update_gradient_texture();
 	emit_changed();
 }
@@ -87,6 +89,7 @@ void SlugVector::_clear_built() {
 	atlas = SlugAtlasData();
 	paint_tex.unref();
 	gradient_tex.unref();
+	gradient_rows_inv = 1.0f;
 }
 
 void SlugVector::_ensure_built() {
@@ -253,7 +256,10 @@ void SlugVector::_build_paint_texture() {
 		img->set_pixel(0, i, Color(a[0], a[1], a[2], a[3]));
 		img->set_pixel(1, i, Color(b[0], b[1], b[2], b[3]));
 		img->set_pixel(2, i, Color(c[0], c[1], c[2], c[3]));
-		img->set_pixel(3, i, Color(0, 0, 0, 0));
+		// Texel 3: the resolved solid color (canvas shaders have no per-vertex
+		// color to spare, so they read it here). Unused for gradients.
+		Color solid = get_shape_color(i);
+		img->set_pixel(3, i, solid);
 	}
 	img->unlock();
 	paint_tex.instance();
@@ -280,8 +286,39 @@ void SlugVector::_update_gradient_texture() {
 	img->unlock();
 	gradient_tex.instance();
 	gradient_tex->create_from_image(img, 0);
+	gradient_rows_inv = 1.0f / (float)rows;
 	atlas.material->set_shader_param("gradient_tex", gradient_tex);
-	atlas.material->set_shader_param("gradient_rows_inv", 1.0f / (float)rows);
+	atlas.material->set_shader_param("gradient_rows_inv", gradient_rows_inv);
+}
+
+Ref<ImageTexture> SlugVector::get_curve_texture() {
+	_ensure_built();
+	return atlas.curve_tex;
+}
+
+Ref<ImageTexture> SlugVector::get_band_texture() {
+	_ensure_built();
+	return atlas.band_tex;
+}
+
+Ref<ImageTexture> SlugVector::get_glyph_texture() {
+	_ensure_built();
+	return atlas.glyph_tex;
+}
+
+Ref<ImageTexture> SlugVector::get_paint_texture() {
+	_ensure_built();
+	return paint_tex;
+}
+
+Ref<ImageTexture> SlugVector::get_gradient_texture() {
+	_ensure_built();
+	return gradient_tex;
+}
+
+float SlugVector::get_gradient_rows_inv() {
+	_ensure_built();
+	return gradient_rows_inv;
 }
 
 SlugVector::SlugVector() {

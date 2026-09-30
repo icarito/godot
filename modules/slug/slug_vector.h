@@ -33,6 +33,7 @@ class SlugVector : public Resource {
 	SlugAtlasData atlas;
 	Ref<ImageTexture> paint_tex;
 	Ref<ImageTexture> gradient_tex;
+	float gradient_rows_inv = 1.0f;
 
 	void _ensure_built();
 	void _clear_built();
@@ -62,6 +63,14 @@ public:
 	// Internal API used by SlugVector3D; not bound to script.
 	const Vector<SlugShape> &get_shapes();
 	Color get_shape_color(int p_index) const;
+
+	// Internal API used by SlugVector2D, which builds its own canvas material.
+	Ref<ImageTexture> get_curve_texture();
+	Ref<ImageTexture> get_band_texture();
+	Ref<ImageTexture> get_glyph_texture();
+	Ref<ImageTexture> get_paint_texture();
+	Ref<ImageTexture> get_gradient_texture();
+	float get_gradient_rows_inv();
 
 	SlugVector();
 	~SlugVector();

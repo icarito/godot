@@ -315,4 +315,60 @@ static inline String slug_vector_shader_code() {
 	return String(SLUG_VECTOR_SHADER_HEAD) + String(SLUG_SHADER_MATH) + String(SLUG_VECTOR_SHADER_BODY);
 }
 
+// 2D (canvas_item) variant. Canvas shaders have no UV2, so the shape index
+// travels in the mesh's vertex color red channel (index / 255) and the
+// fragment fetches the per-shape texels itself. The quad is grown on the CPU,
+// so no perspective dilation is needed here.
+static const char *SLUG_CANVAS_SHADER_CODE = R"(
+shader_type canvas_item;
+
+uniform sampler2D curve_tex;
+uniform sampler2D band_tex;
+uniform sampler2D glyph_tex;
+uniform sampler2D paint_tex;
+uniform sampler2D gradient_tex;
+uniform float gradient_rows_inv = 1.0;
+uniform vec4 shape_modulate = vec4(1.0);
+)";
+
+static const char *SLUG_CANVAS_SHADER_BODY = R"(
+void fragment() {
+	int gi = int(COLOR.r * 255.0 + 0.5);
+	vec4 band = texelFetch(glyph_tex, ivec2(0, gi), 0);
+	vec4 glyph = texelFetch(glyph_tex, ivec2(1, gi), 0);
+	vec4 paint0 = texelFetch(paint_tex, ivec2(0, gi), 0);
+	vec4 solid = texelFetch(paint_tex, ivec2(3, gi), 0);
+
+	vec2 pixels_per_em = 1.0 / fwidth(UV);
+	float coverage = slug_coverage(UV, pixels_per_em, band, glyph, int(paint0.w));
+
+	vec3 base = solid.rgb;
+	float alpha = solid.a;
+	if (paint0.x > 0.5) {
+		vec4 p1 = texelFetch(paint_tex, ivec2(1, gi), 0);
+		vec4 p2 = texelFetch(paint_tex, ivec2(2, gi), 0);
+		vec2 local = vec2(p1.x * UV.x + p1.y * UV.y + p1.z, p2.x * UV.x + p2.y * UV.y + p1.w);
+		float t = (paint0.x < 1.5) ? local.y : length(local);
+		float spread = paint0.z;
+		if (spread > 1.5) {
+			t = fract(t);
+		} else if (spread > 0.5) {
+			float f = fract(t * 0.5) * 2.0;
+			t = f < 1.0 ? f : 2.0 - f;
+		} else {
+			t = clamp(t, 0.0, 1.0);
+		}
+		vec4 g = texture(gradient_tex, vec2(t, (paint0.y + 0.5) * gradient_rows_inv));
+		base = g.rgb;
+		alpha = g.a;
+	}
+
+	COLOR = vec4(base * shape_modulate.rgb, alpha * shape_modulate.a * coverage);
+}
+)";
+
+static inline String slug_canvas_shader_code() {
+	return String(SLUG_CANVAS_SHADER_CODE) + String(SLUG_SHADER_MATH) + String(SLUG_CANVAS_SHADER_BODY);
+}
+
 #endif // SLUG_SHADER_H

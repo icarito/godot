@@ -17,6 +17,7 @@ def get_doc_classes():
         "SlugFont",
         "SlugLabel3D",
         "SlugVector",
+        "SlugVector2D",
         "SlugVector3D",
     ]
 
