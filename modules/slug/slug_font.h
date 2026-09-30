@@ -2,8 +2,9 @@
 /*  slug_font.h                                                         */
 /*************************************************************************/
 /* Godot 3.6 module: modules/slug                                       */
-/* Builds the curve/band/glyph textures and shared ShaderMaterial that   */
-/* slug_shader.h expects, out of a DynamicFontData's outlines.          */
+/* Turns a DynamicFontData's outlines into SlugShapes and hands them to */
+/* SlugShapeBuilder. The GPU resources and packing live in the builder  */
+/* so other producers (SVG paths) can share them.                       */
 /*************************************************************************/
 
 #ifndef SLUG_FONT_H
@@ -11,9 +12,7 @@
 
 #include "core/hash_map.h"
 #include "scene/resources/dynamic_font.h"
-#include "scene/resources/material.h"
-#include "scene/resources/shader.h"
-#include "scene/resources/texture.h"
+#include "slug_shape_builder.h"
 
 class SlugFont : public Resource {
 	GDCLASS(SlugFont, Resource);
@@ -33,7 +32,6 @@ private:
 	bool built = false;
 	bool valid = false;
 	int build_time_usec = 0;
-	int max_curves_per_band = 0;
 
 	float ascent = 0.0f;
 	float descent = 0.0f;
@@ -42,11 +40,7 @@ private:
 	HashMap<uint32_t, Glyph> glyphs; // Codepoint -> glyph.
 	HashMap<uint64_t, float> kerning; // (a << 32 | b) -> kerning in em.
 
-	Ref<ImageTexture> curve_tex;
-	Ref<ImageTexture> band_tex;
-	Ref<ImageTexture> glyph_tex;
-	Ref<Shader> shader;
-	Ref<ShaderMaterial> material;
+	SlugAtlasData atlas;
 
 	void _ensure_built();
 	void _clear_built();
