@@ -346,6 +346,12 @@
 		<constant name="KEY_DIRECTION_R" value="16777267" enum="KeyList">
 			Right Direction key.
 		</constant>
+		<constant name="KEY_BRIGHTNESSDOWN" value="16777268" enum="KeyList">
+			Decreases the screen brightness.
+		</constant>
+		<constant name="KEY_BRIGHTNESSUP" value="16777269" enum="KeyList">
+			Increases the screen brightness.
+		</constant>
 		<constant name="KEY_BACK" value="16777280" enum="KeyList">
 			Media back key. Not to be confused with the Back button on an Android device.
 		</constant>

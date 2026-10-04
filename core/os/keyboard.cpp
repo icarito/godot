@@ -110,6 +110,8 @@ static const _KeyCodeText _keycodes[] = {
 		{KEY_HELP                          ,"Help"},
 		{KEY_DIRECTION_L                   ,"Direction L"},
 		{KEY_DIRECTION_R                   ,"Direction R"},
+		{KEY_BRIGHTNESSDOWN                ,"BrightnessDown"},
+		{KEY_BRIGHTNESSUP                  ,"BrightnessUp"},
 		{KEY_BACK                          ,"Back"},
 		{KEY_FORWARD                       ,"Forward"},
 		{KEY_STOP                          ,"Stop"},
@@ -345,6 +347,8 @@ bool keycode_has_unicode(uint32_t p_keycode) {
 		case KEY_HELP:
 		case KEY_DIRECTION_L:
 		case KEY_DIRECTION_R:
+		case KEY_BRIGHTNESSDOWN:
+		case KEY_BRIGHTNESSUP:
 		case KEY_BACK:
 		case KEY_FORWARD:
 		case KEY_STOP:

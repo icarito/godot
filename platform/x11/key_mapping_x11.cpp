@@ -149,6 +149,8 @@ static _XTranslatePair _xkeysym_to_keycode[] = {
 	{ XF86XK_AudioLowerVolume, KEY_VOLUMEDOWN },
 	{ XF86XK_AudioMute, KEY_VOLUMEMUTE },
 	{ XF86XK_AudioRaiseVolume, KEY_VOLUMEUP },
+	{ XF86XK_MonBrightnessDown, KEY_BRIGHTNESSDOWN },
+	{ XF86XK_MonBrightnessUp, KEY_BRIGHTNESSUP },
 	{ XF86XK_AudioPlay, KEY_MEDIAPLAY },
 	{ XF86XK_AudioStop, KEY_MEDIASTOP },
 	{ XF86XK_AudioPrev, KEY_MEDIAPREVIOUS },
