@@ -701,20 +701,28 @@ int RichTextLabel::_process_line(ItemFrame *p_frame, const Vector2 &p_ofs, int &
 				}
 
 				if (p_mode == PROCESS_DRAW && visible) {
+					Rect2 image_rect;
 					switch (img->align) {
 						case INLINE_ALIGN_TOP: {
-							img->image->draw_rect(ci, Rect2(p_ofs + Point2(align_ofs + wofs, y + lh - (font->get_descent() + font->get_ascent())), img->size));
+							image_rect = Rect2(p_ofs + Point2(align_ofs + wofs, y + lh - (font->get_descent() + font->get_ascent())), img->size);
 						} break;
 						case INLINE_ALIGN_CENTER: {
-							img->image->draw_rect(ci, Rect2(p_ofs + Point2(align_ofs + wofs, y + lh - (font->get_descent() + font->get_ascent() + img->size.height) / 2), img->size));
+							image_rect = Rect2(p_ofs + Point2(align_ofs + wofs, y + lh - (font->get_descent() + font->get_ascent() + img->size.height) / 2), img->size);
 						} break;
 						case INLINE_ALIGN_BASELINE: {
-							img->image->draw_rect(ci, Rect2(p_ofs + Point2(align_ofs + wofs, y + lh - (font->get_descent() + img->size.height)), img->size));
+							image_rect = Rect2(p_ofs + Point2(align_ofs + wofs, y + lh - (font->get_descent() + img->size.height)), img->size);
 						} break;
 						case INLINE_ALIGN_BOTTOM: {
-							img->image->draw_rect(ci, Rect2(p_ofs + Point2(align_ofs + wofs, y + lh - img->size.height), img->size));
+							image_rect = Rect2(p_ofs + Point2(align_ofs + wofs, y + lh - img->size.height), img->size);
 						} break;
 					}
+					bool selected = img->source_text.length() > 0 && selection.active &&
+							(it->index > selection.from->index || (it->index == selection.from->index && selection.from_char <= 0)) &&
+							(it->index < selection.to->index || (it->index == selection.to->index && selection.to_char >= 0));
+					if (selected) {
+						draw_rect(image_rect, selection_bg);
+					}
+					img->image->draw_rect(ci, image_rect);
 				}
 				p_char_count++;
 
@@ -1184,6 +1192,23 @@ void RichTextLabel::_gui_input(Ref<InputEvent> p_event) {
 		}
 
 		if (b->get_button_index() == BUTTON_LEFT) {
+			// Conteo propio de clics (Godot sólo expone is_doubleclick): 2º
+			// clic = párrafo, 3º = toda la burbuja.
+			if (b->is_pressed()) {
+				uint64_t now = OS::get_singleton()->get_ticks_msec();
+				if (now - click_time < 400) {
+					click_count++;
+				} else {
+					click_count = 1;
+				}
+				click_time = now;
+			}
+			if (b->is_pressed() && selection.enabled && click_count >= 3) {
+				select_all();
+				click_count = 0;
+				selection.click = nullptr;
+				return;
+			}
 			if (b->is_pressed() && !b->is_doubleclick()) {
 				scroll_updated = false;
 				int line = 0;
@@ -1216,7 +1241,7 @@ void RichTextLabel::_gui_input(Ref<InputEvent> p_event) {
 					}
 				}
 			} else if (b->is_pressed() && b->is_doubleclick() && selection.enabled) {
-				//doubleclick: select word
+				// Doble clic: seleccionar todo el párrafo (item de texto) bajo el cursor.
 				int line = 0;
 				Item *item = nullptr;
 				bool outside;
@@ -1231,19 +1256,15 @@ void RichTextLabel::_gui_input(Ref<InputEvent> p_event) {
 
 				if (item && item->type == ITEM_TEXT) {
 					String itext = static_cast<ItemText *>(item)->text;
-
-					int beg, end;
-					if (select_word(itext, line, beg, end)) {
-						selection.from = item;
-						selection.to = item;
-						selection.from_char = beg;
-						selection.to_char = end - 1;
-						selection.active = true;
-						if (OS::get_singleton()->has_feature("primary_clipboard")) {
-							OS::get_singleton()->set_clipboard_primary(get_selected_text());
-						}
-						update();
+					selection.from = item;
+					selection.to = item;
+					selection.from_char = 0;
+					selection.to_char = itext.length() - 1;
+					selection.active = true;
+					if (OS::get_singleton()->has_feature("primary_clipboard")) {
+						OS::get_singleton()->set_clipboard_primary(get_selected_text());
 					}
+					update();
 				}
 			} else if (!b->is_pressed()) {
 				if (selection.drag_attempt) {
@@ -1755,6 +1776,10 @@ void RichTextLabel::_remove_item(Item *p_item, const int p_line, const int p_sub
 }
 
 void RichTextLabel::add_image(const Ref<Texture> &p_image, const int p_width, const int p_height, RichTextLabel::InlineAlign p_align) {
+	add_inline_image(p_image, String(), p_width, p_height, p_align);
+}
+
+void RichTextLabel::add_inline_image(const Ref<Texture> &p_image, const String &p_source_text, const int p_width, const int p_height, RichTextLabel::InlineAlign p_align) {
 	if (current->type == ITEM_TABLE) {
 		return;
 	}
@@ -1766,6 +1791,7 @@ void RichTextLabel::add_image(const Ref<Texture> &p_image, const int p_width, co
 
 	item->image = p_image;
 	item->align = p_align;
+	item->source_text = p_source_text;
 
 	if (p_width > 0) {
 		// custom width
@@ -2127,6 +2153,8 @@ bool RichTextLabel::is_scroll_following() const {
 	return scroll_follow;
 }
 
+static bool _parse_inline_emoji_params(const String &p_params, int &r_size, String &r_source_text);
+
 Error RichTextLabel::parse_bbcode(const String &p_bbcode) {
 	clear();
 	return append_bbcode(p_bbcode);
@@ -2198,7 +2226,7 @@ Error RichTextLabel::append_bbcode(const String &p_bbcode) {
 
 			tag_stack.pop_front();
 			pos = brk_end + 1;
-			if (tag != "/img") {
+			if (tag != "/img" && tag != "/emoji") {
 				pop();
 			}
 
@@ -2308,6 +2336,31 @@ Error RichTextLabel::append_bbcode(const String &p_bbcode) {
 			push_meta(url);
 			pos = brk_end + 1;
 			tag_stack.push_front("url");
+		} else if (tag.begins_with("emoji=")) {
+			// The texture is a presentation substitute; retaining source_text does not add Unicode shaping.
+			int size = 0;
+			String source_text;
+			String params = tag.substr(6, tag.length() - 6);
+			int end = p_bbcode.find("[", brk_end);
+			if (end == -1) {
+				end = p_bbcode.length();
+			}
+
+			String texture_path = p_bbcode.substr(brk_end + 1, end - brk_end - 1);
+			if (texture_path.length() <= 4096 && _parse_inline_emoji_params(params, size, source_text)) {
+				Ref<Texture> texture;
+				if (ResourceLoader::exists(texture_path, "Texture")) {
+					texture = ResourceLoader::load(texture_path, "Texture");
+				}
+				if (texture.is_valid()) {
+					add_inline_image(texture, source_text, size, size);
+				} else {
+					add_text(source_text);
+				}
+			}
+
+			pos = end;
+			tag_stack.push_front("emoji");
 		} else if (tag == "img") {
 			int end = p_bbcode.find("[", brk_end);
 			if (end == -1) {
@@ -2676,6 +2729,63 @@ bool RichTextLabel::search(const String &p_string, bool p_from_selection, bool p
 	return false;
 }
 
+static bool _parse_inline_emoji_params(const String &p_params, int &r_size, String &r_source_text) {
+	if (p_params.length() > 512) {
+		return false;
+	}
+
+	int comma = p_params.find(",");
+	if (comma <= 0 || comma == p_params.length() - 1) {
+		return false;
+	}
+
+	String size_text = p_params.substr(0, comma);
+	if (size_text.length() > 3) {
+		return false;
+	}
+	int size = 0;
+	for (int i = 0; i < size_text.length(); i++) {
+		CharType c = size_text[i];
+		if (c < '0' || c > '9') {
+			return false;
+		}
+		size = size * 10 + (c - '0');
+	}
+	if (size < 1 || size > 512) {
+		return false;
+	}
+
+	String source_text;
+	String codepoints = p_params.substr(comma + 1, p_params.length() - comma - 1);
+	if (codepoints.empty() || codepoints[codepoints.length() - 1] == '-') {
+		return false;
+	}
+	int start = 0;
+	int count = 0;
+	while (start < codepoints.length()) {
+		int end = codepoints.find("-", start);
+		if (end < 0) {
+			end = codepoints.length();
+		}
+		String hex = codepoints.substr(start, end - start);
+		if (hex.empty() || hex.length() > 6 || hex[0] == '+' || hex[0] == '-' || !hex.is_valid_hex_number(false) || ++count > 32) {
+			return false;
+		}
+		int64_t scalar = hex.hex_to_int64(false);
+		if (scalar < 0 || scalar > 0x10FFFF || (scalar >= 0xD800 && scalar <= 0xDFFF)) {
+			return false;
+		}
+		source_text += String::chr((CharType)scalar);
+		start = end + 1;
+	}
+	if (source_text.empty()) {
+		return false;
+	}
+	r_size = size;
+	r_source_text = source_text;
+	return true;
+}
+
 String RichTextLabel::get_selected_text() {
 	if (!selection.active || !selection.enabled) {
 		return "";
@@ -2698,6 +2808,13 @@ String RichTextLabel::get_selected_text() {
 				text += itext;
 			}
 
+		} else if (item->type == ITEM_IMAGE) {
+			ItemImage *image = static_cast<ItemImage *>(item);
+			if (!image->source_text.empty() &&
+					(item->index > selection.from->index || (item->index == selection.from->index && selection.from_char <= 0)) &&
+					(item->index < selection.to->index || (item->index == selection.to->index && selection.to_char >= 0))) {
+				text += image->source_text;
+			}
 		} else if (item->type == ITEM_NEWLINE) {
 			text += "\n";
 		}
@@ -2713,6 +2830,33 @@ String RichTextLabel::get_selected_text() {
 
 void RichTextLabel::deselect() {
 	selection.active = false;
+	update();
+}
+
+void RichTextLabel::select_all() {
+	if (!selection.enabled) {
+		return;
+	}
+	Item *from = nullptr;
+	Item *to = nullptr;
+	Item *it = main;
+	while (it) {
+		if (it->type == ITEM_TEXT || it->type == ITEM_NEWLINE || (it->type == ITEM_IMAGE && !static_cast<ItemImage *>(it)->source_text.empty())) {
+			if (from == nullptr) {
+				from = it;
+			}
+			to = it;
+		}
+		it = _get_next_item(it, true);
+	}
+	if (from == nullptr || to == nullptr) {
+		return;
+	}
+	selection.from = from;
+	selection.from_char = 0;
+	selection.to = to;
+	selection.to_char = (to->type == ITEM_TEXT) ? static_cast<ItemText *>(to)->text.size() - 1 : 0;
+	selection.active = true;
 	update();
 }
 
@@ -2777,6 +2921,8 @@ String RichTextLabel::get_text() {
 			text += t->text;
 		} else if (it->type == ITEM_NEWLINE) {
 			text += "\n";
+		} else if (it->type == ITEM_IMAGE) {
+			text += static_cast<ItemImage *>(it)->source_text;
 		} else if (it->type == ITEM_INDENT) {
 			text += "\t";
 		}
@@ -2855,6 +3001,7 @@ void RichTextLabel::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("add_text", "text"), &RichTextLabel::add_text);
 	ClassDB::bind_method(D_METHOD("set_text", "text"), &RichTextLabel::set_text);
 	ClassDB::bind_method(D_METHOD("add_image", "image", "width", "height", "align"), &RichTextLabel::add_image, DEFVAL(0), DEFVAL(0), DEFVAL(INLINE_ALIGN_BASELINE));
+	ClassDB::bind_method(D_METHOD("add_inline_image", "image", "source_text", "width", "height", "align"), &RichTextLabel::add_inline_image, DEFVAL(0), DEFVAL(0), DEFVAL(INLINE_ALIGN_CENTER));
 	ClassDB::bind_method(D_METHOD("newline"), &RichTextLabel::add_newline);
 	ClassDB::bind_method(D_METHOD("remove_line", "line"), &RichTextLabel::remove_line);
 	ClassDB::bind_method(D_METHOD("push_font", "font"), &RichTextLabel::push_font);
@@ -2878,6 +3025,7 @@ void RichTextLabel::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("clear"), &RichTextLabel::clear);
 	ClassDB::bind_method(D_METHOD("get_selected_text"), &RichTextLabel::get_selected_text);
 	ClassDB::bind_method(D_METHOD("deselect"), &RichTextLabel::deselect);
+	ClassDB::bind_method(D_METHOD("select_all"), &RichTextLabel::select_all);
 
 	ClassDB::bind_method(D_METHOD("set_meta_underline", "enable"), &RichTextLabel::set_meta_underline);
 	ClassDB::bind_method(D_METHOD("is_meta_underlined"), &RichTextLabel::is_meta_underlined);
@@ -3021,6 +3169,7 @@ int RichTextLabel::get_visible_characters() const {
 	return visible_characters;
 }
 int RichTextLabel::get_total_character_count() const {
+	const_cast<RichTextLabel *>(this)->_validate_line_caches(main);
 	int tc = 0;
 	for (int i = 0; i < current_frame->lines.size(); i++) {
 		tc += current_frame->lines[i].char_count;
@@ -3160,6 +3309,8 @@ RichTextLabel::RichTextLabel() {
 	selection.enabled = false;
 	selection.drag_attempt = false;
 	deselect_on_focus_loss_enabled = true;
+	click_count = 0;
+	click_time = 0;
 
 	visible_characters = -1;
 	percent_visible = 1;

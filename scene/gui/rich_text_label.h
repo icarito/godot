@@ -156,6 +156,7 @@ private:
 		Ref<Texture> image;
 		Size2 size;
 		InlineAlign align;
+		String source_text;
 		ItemImage() {
 			type = ITEM_IMAGE;
 			align = INLINE_ALIGN_BASELINE;
@@ -388,6 +389,9 @@ private:
 	Selection selection;
 	bool deselect_on_focus_loss_enabled;
 
+	int click_count;
+	uint64_t click_time;
+
 	int visible_characters;
 	float percent_visible;
 
@@ -434,6 +438,7 @@ public:
 	String get_text();
 	void add_text(const String &p_text);
 	void add_image(const Ref<Texture> &p_image, const int p_width = 0, const int p_height = 0, RichTextLabel::InlineAlign p_align = INLINE_ALIGN_BASELINE);
+	void add_inline_image(const Ref<Texture> &p_image, const String &p_source_text, const int p_width = 0, const int p_height = 0, RichTextLabel::InlineAlign p_align = INLINE_ALIGN_CENTER);
 	void add_newline();
 	bool remove_line(const int p_line);
 	void push_font(const Ref<Font> &p_font);
@@ -503,6 +508,7 @@ public:
 	void set_deselect_on_focus_loss_enabled(const bool p_enabled);
 	bool is_deselect_on_focus_loss_enabled() const;
 	void deselect();
+	void select_all();
 
 	Error parse_bbcode(const String &p_bbcode);
 	Error append_bbcode(const String &p_bbcode);
