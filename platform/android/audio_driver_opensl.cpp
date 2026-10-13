@@ -205,8 +205,7 @@ void AudioDriverOpenSL::_record_buffer_callback(SLAndroidSimpleBufferQueueItf qu
 	}
 	for (int i = 0; i < rec_buffer.size(); i++) {
 		int32_t sample = rec_buffer[i] << 16;
-		input_buffer_write(sample);
-		input_buffer_write(sample); // call twice to convert to Stereo
+		input_buffer_write(sample); // el buffer de entrada ya es estéreo intercalado
 	}
 
 	SLresult res = (*queueItf)->Enqueue(queueItf, rec_buffer.ptrw(), rec_buffer.size() * sizeof(int16_t));
@@ -234,11 +233,11 @@ Error AudioDriverOpenSL::capture_init_device() {
 	};
 	SLDataFormat_PCM format_pcm = {
 		SL_DATAFORMAT_PCM,
-		1,
+		2,
 		SL_SAMPLINGRATE_44_1,
 		SL_PCMSAMPLEFORMAT_FIXED_16,
 		SL_PCMSAMPLEFORMAT_FIXED_16,
-		SL_SPEAKER_FRONT_CENTER,
+		SL_SPEAKER_FRONT_LEFT | SL_SPEAKER_FRONT_RIGHT,
 		SL_BYTEORDER_LITTLEENDIAN
 	};
 	SLDataSink recSnk = { &loc_bq, &format_pcm };
@@ -247,6 +246,7 @@ Error AudioDriverOpenSL::capture_init_device() {
 	const SLboolean req[2] = { SL_BOOLEAN_TRUE, SL_BOOLEAN_TRUE };
 
 	SLresult res = (*EngineItf)->CreateAudioRecorder(EngineItf, &recorder, &recSource, &recSnk, 2, ids, req);
+	print_line("XATDBG opensl CreateAudioRecorder=" + String::num_int64((int64_t)res));
 	ERR_FAIL_COND_V(res != SL_RESULT_SUCCESS, ERR_CANT_OPEN);
 
 	// Preset de grabación: en algunas ROMs el preset por defecto captura
@@ -259,6 +259,7 @@ Error AudioDriverOpenSL::capture_init_device() {
 	}
 
 	res = (*recorder)->Realize(recorder, SL_BOOLEAN_FALSE);
+	print_line("XATDBG opensl Realize=" + String::num_int64((int64_t)res));
 	ERR_FAIL_COND_V(res != SL_RESULT_SUCCESS, ERR_CANT_OPEN);
 
 	res = (*recorder)->GetInterface(recorder, SL_IID_RECORD, (void *)&recordItf);
@@ -268,6 +269,7 @@ Error AudioDriverOpenSL::capture_init_device() {
 	ERR_FAIL_COND_V(res != SL_RESULT_SUCCESS, ERR_CANT_OPEN);
 
 	res = (*recordBufferQueueItf)->RegisterCallback(recordBufferQueueItf, _record_buffer_callbacks, this);
+	print_line("XATDBG opensl RegisterCallback=" + String::num_int64((int64_t)res));
 	ERR_FAIL_COND_V(res != SL_RESULT_SUCCESS, ERR_CANT_OPEN);
 
 	SLuint32 state;
@@ -290,6 +292,7 @@ Error AudioDriverOpenSL::capture_init_device() {
 	ERR_FAIL_COND_V(res != SL_RESULT_SUCCESS, ERR_CANT_OPEN);
 
 	res = (*recordItf)->SetRecordState(recordItf, SL_RECORDSTATE_RECORDING);
+	print_line("XATDBG opensl SetRecordState=" + String::num_int64((int64_t)res));
 	ERR_FAIL_COND_V(res != SL_RESULT_SUCCESS, ERR_CANT_OPEN);
 
 	return OK;
