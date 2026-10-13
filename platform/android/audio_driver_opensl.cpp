@@ -32,8 +32,31 @@
 
 #include <string.h>
 
+#include <jni.h>
+#include "core/os/thread.h"
+#include "thread_jandroid.h"
+
 #define MAX_NUMBER_INTERFACES 3
 #define MAX_NUMBER_OUTPUT_DEVICES 6
+
+// --- Captura por JNI AudioRecord -------------------------------------------
+// OpenSL entrega silencio en algunas ROMs (el callback corre pero el buffer es
+// cero). Se captura con android.media.AudioRecord vía JNI y se escribe en el
+// input buffer del AudioServer, igual que hacía el callback de OpenSL.
+static jobject s_ar = nullptr;
+static jclass s_ar_class = nullptr;
+static jmethodID s_ar_read = nullptr;
+static jmethodID s_ar_stop = nullptr;
+static jmethodID s_ar_release = nullptr;
+static Thread *s_ar_thread = nullptr;
+static volatile bool s_ar_run = false;
+static AudioDriverOpenSL *s_ar_driver = nullptr;
+static const int AR_RATE = 44100;
+static const int AR_FRAMES = 1024;
+
+static void _ar_capture_trampoline(void *p_ud) {
+	((AudioDriverOpenSL *)p_ud)->_ar_capture_loop();
+}
 
 /* Structure for passing information to callback function */
 
@@ -298,44 +321,122 @@ Error AudioDriverOpenSL::capture_init_device() {
 	return OK;
 }
 
+void AudioDriverOpenSL::_ar_capture_loop() {
+	JNIEnv *env = get_jni_env();
+	if (env == nullptr) {
+		return;
+	}
+	jshortArray arr = env->NewShortArray(AR_FRAMES);
+	while (s_ar_run) {
+		int n = env->CallIntMethod(s_ar, s_ar_read, arr, 0, AR_FRAMES);
+		if (env->ExceptionCheck()) {
+			env->ExceptionClear();
+			break;
+		}
+		if (n > 0) {
+			jshort *buf = env->GetShortArrayElements(arr, nullptr);
+			if (buf != nullptr) {
+				for (int i = 0; i < n; i++) {
+					int32_t smp = ((int32_t)buf[i]) << 16;
+					input_buffer_write(smp);
+					input_buffer_write(smp); // mono -> estéreo (L=R)
+				}
+				env->ReleaseShortArrayElements(arr, buf, JNI_ABORT);
+			}
+		}
+	}
+	env->DeleteLocalRef(arr);
+}
+
 Error AudioDriverOpenSL::capture_start() {
 	if (!(bool)OS::get_singleton()->request_permission("RECORD_AUDIO")) {
 		WARN_PRINT("Unable to start audio capture - No RECORD_AUDIO permission");
 		return ERR_UNAUTHORIZED;
 	}
-	// Reusar el recorder si ya existe. Recrearlo en cada grabación pisaba
-	// recordBufferQueueItf mientras un callback previo seguía en vuelo y
-	// terminaba en SIGSEGV dentro de IBufferQueue_Enqueue (hilo AudioRecord).
-	if (recorder != nullptr) {
-		SLuint32 state;
-		SLresult r = (*recordItf)->GetRecordState(recordItf, &state);
-		ERR_FAIL_COND_V(r != SL_RESULT_SUCCESS, ERR_CANT_OPEN);
-		if (state != SL_RECORDSTATE_RECORDING) {
-			r = (*recordBufferQueueItf)->Clear(recordBufferQueueItf);
-			ERR_FAIL_COND_V(r != SL_RESULT_SUCCESS, ERR_CANT_OPEN);
-			r = (*recordBufferQueueItf)->Enqueue(recordBufferQueueItf, rec_buffer.ptrw(), rec_buffer.size() * sizeof(int16_t));
-			ERR_FAIL_COND_V(r != SL_RESULT_SUCCESS, ERR_CANT_OPEN);
-			r = (*recordItf)->SetRecordState(recordItf, SL_RECORDSTATE_RECORDING);
-			ERR_FAIL_COND_V(r != SL_RESULT_SUCCESS, ERR_CANT_OPEN);
-		}
-		return OK;
+	if (s_ar != nullptr) {
+		return OK; // ya capturando
 	}
-	return capture_init_device();
+	JNIEnv *env = get_jni_env();
+	if (env == nullptr) {
+		return ERR_CANT_OPEN;
+	}
+	if (s_ar_class == nullptr) {
+		jclass local = env->FindClass("android/media/AudioRecord");
+		if (local == nullptr) {
+			env->ExceptionClear();
+			return ERR_CANT_OPEN;
+		}
+		s_ar_class = (jclass)env->NewGlobalRef(local);
+		env->DeleteLocalRef(local);
+	}
+	if (s_ar_class == nullptr) {
+		return ERR_CANT_OPEN;
+	}
+	jmethodID min = env->GetStaticMethodID(s_ar_class, "getMinBufferSize", "(III)I");
+	jmethodID ctor = env->GetMethodID(s_ar_class, "<init>", "(IIIII)V");
+	jmethodID startm = env->GetMethodID(s_ar_class, "startRecording", "()V");
+	s_ar_read = env->GetMethodID(s_ar_class, "read", "([SII)I");
+	s_ar_stop = env->GetMethodID(s_ar_class, "stop", "()V");
+	s_ar_release = env->GetMethodID(s_ar_class, "release", "()V");
+	if (min == nullptr || ctor == nullptr || startm == nullptr || s_ar_read == nullptr) {
+		env->ExceptionClear();
+		return ERR_CANT_OPEN;
+	}
+	const int CHANNEL_IN_MONO = 16; // AudioFormat.CHANNEL_IN_MONO
+	const int ENCODING_PCM_16BIT = 2; // AudioFormat.ENCODING_PCM_16BIT
+	const int MIC = 1; // MediaRecorder.AudioSource.MIC
+	int minbuf = env->CallStaticIntMethod(s_ar_class, min, AR_RATE, CHANNEL_IN_MONO, ENCODING_PCM_16BIT);
+	if (minbuf <= 0) {
+		minbuf = AR_FRAMES * 4;
+	}
+	jobject ar = env->NewObject(s_ar_class, ctor, MIC, AR_RATE, CHANNEL_IN_MONO, ENCODING_PCM_16BIT, minbuf);
+	if (ar == nullptr) {
+		env->ExceptionClear();
+		return ERR_CANT_OPEN;
+	}
+	env->CallVoidMethod(ar, startm);
+	if (env->ExceptionCheck()) {
+		env->ExceptionClear();
+		env->DeleteLocalRef(ar);
+		return ERR_CANT_OPEN;
+	}
+	s_ar = env->NewGlobalRef(ar);
+	env->DeleteLocalRef(ar);
+	if (s_ar == nullptr) {
+		return ERR_CANT_OPEN;
+	}
+	input_buffer_init(AR_RATE / 10);
+	s_ar_driver = this;
+	s_ar_run = true;
+	s_ar_thread = memnew(Thread);
+	s_ar_thread->start(_ar_capture_trampoline, this);
+	return OK;
 }
 
 Error AudioDriverOpenSL::capture_stop() {
-	SLuint32 state;
-	SLresult res = (*recordItf)->GetRecordState(recordItf, &state);
-	ERR_FAIL_COND_V(res != SL_RESULT_SUCCESS, ERR_CANT_OPEN);
-
-	if (state != SL_RECORDSTATE_STOPPED) {
-		res = (*recordItf)->SetRecordState(recordItf, SL_RECORDSTATE_STOPPED);
-		ERR_FAIL_COND_V(res != SL_RESULT_SUCCESS, ERR_CANT_OPEN);
-
-		res = (*recordBufferQueueItf)->Clear(recordBufferQueueItf);
-		ERR_FAIL_COND_V(res != SL_RESULT_SUCCESS, ERR_CANT_OPEN);
+	if (s_ar_thread != nullptr) {
+		s_ar_run = false;
+		s_ar_thread->wait_to_finish();
+		memdelete(s_ar_thread);
+		s_ar_thread = nullptr;
 	}
-
+	JNIEnv *env = get_jni_env();
+	if (s_ar != nullptr && env != nullptr) {
+		if (s_ar_stop != nullptr) {
+			env->CallVoidMethod(s_ar, s_ar_stop);
+			if (env->ExceptionCheck()) {
+				env->ExceptionClear();
+			}
+		}
+		if (s_ar_release != nullptr) {
+			env->CallVoidMethod(s_ar, s_ar_release);
+			if (env->ExceptionCheck()) {
+				env->ExceptionClear();
+			}
+		}
+		env->DeleteGlobalRef(s_ar);
+		s_ar = nullptr;
+	}
 	return OK;
 }
 

@@ -102,6 +102,8 @@ public:
 	virtual Error capture_start();
 	virtual Error capture_stop();
 
+	void _ar_capture_loop(); // loop de captura por JNI AudioRecord
+
 	AudioDriverOpenSL();
 };
 
