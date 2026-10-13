@@ -188,6 +188,21 @@ void AudioDriverOpenSL::start() {
 }
 
 void AudioDriverOpenSL::_record_buffer_callback(SLAndroidSimpleBufferQueueItf queueItf) {
+	static bool logged = false;
+	if (!logged) {
+		logged = true;
+		int peak = 0;
+		for (int i = 0; i < rec_buffer.size(); i++) {
+			int v = rec_buffer[i];
+			if (v < 0) {
+				v = -v;
+			}
+			if (v > peak) {
+				peak = v;
+			}
+		}
+		print_line("XATDBG opensl rec first peak=" + String::num_int64(peak));
+	}
 	for (int i = 0; i < rec_buffer.size(); i++) {
 		int32_t sample = rec_buffer[i] << 16;
 		input_buffer_write(sample);
@@ -233,6 +248,15 @@ Error AudioDriverOpenSL::capture_init_device() {
 
 	SLresult res = (*EngineItf)->CreateAudioRecorder(EngineItf, &recorder, &recSource, &recSnk, 2, ids, req);
 	ERR_FAIL_COND_V(res != SL_RESULT_SUCCESS, ERR_CANT_OPEN);
+
+	// Preset de grabación: en algunas ROMs el preset por defecto captura
+	// silencio (micrófono devuelve ceros). VOICE_RECOGNITION es lo más
+	// compatible para notas de voz y debe setearse antes de Realize.
+	SLAndroidConfigurationItf configItf;
+	if ((*recorder)->GetInterface(recorder, SL_IID_ANDROIDCONFIGURATION, (void *)&configItf) == SL_RESULT_SUCCESS) {
+		SLint32 preset = SL_ANDROID_RECORDING_PRESET_VOICE_RECOGNITION;
+		(*configItf)->SetConfiguration(configItf, SL_ANDROID_KEY_RECORDING_PRESET, &preset, sizeof(preset));
+	}
 
 	res = (*recorder)->Realize(recorder, SL_BOOLEAN_FALSE);
 	ERR_FAIL_COND_V(res != SL_RESULT_SUCCESS, ERR_CANT_OPEN);
