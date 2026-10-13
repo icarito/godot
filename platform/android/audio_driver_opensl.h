@@ -55,14 +55,14 @@ class AudioDriverOpenSL : public AudioDriver {
 	Vector<int16_t> rec_buffer;
 
 	SLPlayItf playItf;
-	SLRecordItf recordItf;
+	SLRecordItf recordItf = nullptr;
 	SLObjectItf sl;
 	SLEngineItf EngineItf;
 	SLObjectItf OutputMix;
 	SLObjectItf player;
-	SLObjectItf recorder;
+	SLObjectItf recorder = nullptr;
 	SLAndroidSimpleBufferQueueItf bufferQueueItf;
-	SLAndroidSimpleBufferQueueItf recordBufferQueueItf;
+	SLAndroidSimpleBufferQueueItf recordBufferQueueItf = nullptr;
 	SLDataSource audioSource;
 	SLDataFormat_PCM pcm;
 	SLDataSink audioSink;

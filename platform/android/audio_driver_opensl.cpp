@@ -194,7 +194,7 @@ void AudioDriverOpenSL::_record_buffer_callback(SLAndroidSimpleBufferQueueItf qu
 		input_buffer_write(sample); // call twice to convert to Stereo
 	}
 
-	SLresult res = (*recordBufferQueueItf)->Enqueue(recordBufferQueueItf, rec_buffer.ptrw(), rec_buffer.size() * sizeof(int16_t));
+	SLresult res = (*queueItf)->Enqueue(queueItf, rec_buffer.ptrw(), rec_buffer.size() * sizeof(int16_t));
 	ERR_FAIL_COND(res != SL_RESULT_SUCCESS);
 }
 
@@ -272,12 +272,28 @@ Error AudioDriverOpenSL::capture_init_device() {
 }
 
 Error AudioDriverOpenSL::capture_start() {
-	if (OS::get_singleton()->request_permission("RECORD_AUDIO")) {
-		return capture_init_device();
+	if (!(bool)OS::get_singleton()->request_permission("RECORD_AUDIO")) {
+		WARN_PRINT("Unable to start audio capture - No RECORD_AUDIO permission");
+		return ERR_UNAUTHORIZED;
 	}
-
-	WARN_PRINT("Unable to start audio capture - No RECORD_AUDIO permission");
-	return ERR_UNAUTHORIZED;
+	// Reusar el recorder si ya existe. Recrearlo en cada grabación pisaba
+	// recordBufferQueueItf mientras un callback previo seguía en vuelo y
+	// terminaba en SIGSEGV dentro de IBufferQueue_Enqueue (hilo AudioRecord).
+	if (recorder != nullptr) {
+		SLuint32 state;
+		SLresult r = (*recordItf)->GetRecordState(recordItf, &state);
+		ERR_FAIL_COND_V(r != SL_RESULT_SUCCESS, ERR_CANT_OPEN);
+		if (state != SL_RECORDSTATE_RECORDING) {
+			r = (*recordBufferQueueItf)->Clear(recordBufferQueueItf);
+			ERR_FAIL_COND_V(r != SL_RESULT_SUCCESS, ERR_CANT_OPEN);
+			r = (*recordBufferQueueItf)->Enqueue(recordBufferQueueItf, rec_buffer.ptrw(), rec_buffer.size() * sizeof(int16_t));
+			ERR_FAIL_COND_V(r != SL_RESULT_SUCCESS, ERR_CANT_OPEN);
+			r = (*recordItf)->SetRecordState(recordItf, SL_RECORDSTATE_RECORDING);
+			ERR_FAIL_COND_V(r != SL_RESULT_SUCCESS, ERR_CANT_OPEN);
+		}
+		return OK;
+	}
+	return capture_init_device();
 }
 
 Error AudioDriverOpenSL::capture_stop() {
