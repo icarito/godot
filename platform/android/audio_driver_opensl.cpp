@@ -396,7 +396,7 @@ Error AudioDriverOpenSL::capture_start() {
 	}
 	const int CHANNEL_IN_MONO = 16; // AudioFormat.CHANNEL_IN_MONO
 	const int ENCODING_PCM_16BIT = 2; // AudioFormat.ENCODING_PCM_16BIT
-	const int MIC = 1; // MediaRecorder.AudioSource.MIC
+	const int MIC = 6; // AudioSource.VOICE_RECOGNITION (MIC=1 devolvía PCM mudo en esta HAL)
 	int minbuf = env->CallStaticIntMethod(s_ar_class, min, AR_RATE, CHANNEL_IN_MONO, ENCODING_PCM_16BIT);
 	print_line("XATDBG ar minbuf=" + String::num_int64(minbuf));
 	if (minbuf <= 0) {
