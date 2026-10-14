@@ -327,9 +327,15 @@ void AudioDriverOpenSL::_ar_capture_loop() {
 		return;
 	}
 	jshortArray arr = env->NewShortArray(AR_FRAMES);
+	bool logged = false;
 	while (s_ar_run) {
 		int n = env->CallIntMethod(s_ar, s_ar_read, arr, 0, AR_FRAMES);
+		if (!logged) {
+			logged = true;
+			print_line("XATDBG ar read n=" + String::num_int64(n));
+		}
 		if (env->ExceptionCheck()) {
+			env->ExceptionDescribe();
 			env->ExceptionClear();
 			break;
 		}
@@ -386,20 +392,26 @@ Error AudioDriverOpenSL::capture_start() {
 	const int ENCODING_PCM_16BIT = 2; // AudioFormat.ENCODING_PCM_16BIT
 	const int MIC = 1; // MediaRecorder.AudioSource.MIC
 	int minbuf = env->CallStaticIntMethod(s_ar_class, min, AR_RATE, CHANNEL_IN_MONO, ENCODING_PCM_16BIT);
+	print_line("XATDBG ar minbuf=" + String::num_int64(minbuf));
 	if (minbuf <= 0) {
 		minbuf = AR_FRAMES * 4;
 	}
 	jobject ar = env->NewObject(s_ar_class, ctor, MIC, AR_RATE, CHANNEL_IN_MONO, ENCODING_PCM_16BIT, minbuf);
 	if (ar == nullptr) {
+		print_line("XATDBG ar NewObject null");
+		env->ExceptionDescribe();
 		env->ExceptionClear();
 		return ERR_CANT_OPEN;
 	}
 	env->CallVoidMethod(ar, startm);
 	if (env->ExceptionCheck()) {
+		print_line("XATDBG ar startRecording exception");
+		env->ExceptionDescribe();
 		env->ExceptionClear();
 		env->DeleteLocalRef(ar);
 		return ERR_CANT_OPEN;
 	}
+	print_line("XATDBG ar startRecording ok");
 	s_ar = env->NewGlobalRef(ar);
 	env->DeleteLocalRef(ar);
 	if (s_ar == nullptr) {
