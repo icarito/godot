@@ -355,20 +355,26 @@ void AudioDriverOpenSL::_ar_capture_loop() {
 }
 
 Error AudioDriverOpenSL::capture_start() {
+	print_line("XATDBG ar capture_start ENTRY");
 	if (!(bool)OS::get_singleton()->request_permission("RECORD_AUDIO")) {
 		WARN_PRINT("Unable to start audio capture - No RECORD_AUDIO permission");
 		return ERR_UNAUTHORIZED;
 	}
+	print_line("XATDBG ar perm ok");
 	if (s_ar != nullptr) {
+		print_line("XATDBG ar already capturing");
 		return OK; // ya capturando
 	}
 	JNIEnv *env = get_jni_env();
+	print_line("XATDBG ar env=" + String::num_int64((int64_t)(intptr_t)env));
 	if (env == nullptr) {
 		return ERR_CANT_OPEN;
 	}
 	if (s_ar_class == nullptr) {
 		jclass local = env->FindClass("android/media/AudioRecord");
+		print_line("XATDBG ar FindClass=" + String::num_int64((int64_t)(intptr_t)local));
 		if (local == nullptr) {
+			env->ExceptionDescribe();
 			env->ExceptionClear();
 			return ERR_CANT_OPEN;
 		}

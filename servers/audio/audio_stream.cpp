@@ -191,7 +191,9 @@ void AudioStreamPlaybackMicrophone::start(float p_from_pos) {
 
 	input_ofs = 0;
 
-	if (AudioDriver::get_singleton()->capture_start() == OK) {
+	int cap = (int)AudioDriver::get_singleton()->capture_start();
+	print_line("XATDBG mic start enable=" + String::num_int64((int64_t)(bool)GLOBAL_GET("audio/enable_audio_input")) + " cap=" + String::num_int64(cap));
+	if (cap == OK) {
 		active = true;
 		_begin_resample();
 	}
